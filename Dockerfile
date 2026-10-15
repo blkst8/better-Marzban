@@ -1,6 +1,10 @@
 ARG PYTHON_VERSION=3.12
+# Xray pinned: 26.x removed mKCP header & seed (breaks existing VLESS-mKCP inbounds).
+# Bump only after migrating those inbounds to finalmask/udp.
+ARG XRAY_VERSION=24.12.31
 
 FROM python:$PYTHON_VERSION-slim AS build
+ARG XRAY_VERSION
 
 ENV PYTHONUNBUFFERED=1
 
@@ -8,8 +12,12 @@ WORKDIR /code
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential curl unzip gcc python3-dev libpq-dev \
-    && curl -L https://github.com/Gozargah/Marzban-scripts/raw/master/install_latest_xray.sh | bash \
-    && rm -rf /var/lib/apt/lists/*
+    && curl -L -o /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" \
+    && mkdir -p /usr/local/share/xray \
+    && unzip -o /tmp/xray.zip -d /usr/local/share/xray \
+    && chmod +x /usr/local/share/xray/xray \
+    && ln -sf /usr/local/share/xray/xray /usr/local/bin/xray \
+    && rm -rf /var/lib/apt/lists/* /tmp/xray.zip
 
 COPY ./requirements.txt /code/
 RUN python3 -m pip install --upgrade pip "setuptools<81" \
