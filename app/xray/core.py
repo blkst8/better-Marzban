@@ -43,7 +43,12 @@ class XRayCore:
         if private_key:
             cmd.extend(['-i', private_key])
         output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
-        m = re.match(r'Private key: (.+)\nPublic key: (.+)', output)
+        # old cores: "Private key: <b64>\nPublic key: <b64>"
+        # xray 26.x+: "PrivateKey: <b64>\nPassword (PublicKey): <b64>\nHash32: ..."
+        m = re.search(
+            r'Private ?[kK]ey: (\S+)\s*\n\s*(?:Password \(PublicKey\)|Public ?[kK]ey): (\S+)',
+            output
+        )
         if m:
             private, public = m.groups()
             return {
