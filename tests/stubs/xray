@@ -1,0 +1,19 @@
+#!/bin/sh
+# Minimal stand-in for the xray binary: the panel only shells out for
+# `version` and `x25519` during import and key generation.
+case "$1" in
+  version)
+    echo "Xray 24.9.11 (Xray, Penetrates Everything.) Custom (go1.21.5 linux/amd64)"
+    ;;
+  x25519)
+    echo "Private key: aGVsbG8gdGhpcy1pcy1hLWZha2Uta2V5LXZhbHVl"
+    echo "Public key:  aGVsbG8gdGhpcy1pcy1hLWZhbGUtcHVibGljLWtleQ=="
+    ;;
+  run)
+    sleep 3600
+    ;;
+  *)
+    echo "unsupported stub command: $1" >&2
+    exit 1
+    ;;
+esac

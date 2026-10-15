@@ -4,6 +4,7 @@ from datetime import datetime as dt
 from dateutil.relativedelta import relativedelta
 
 from app.models.user import User, UserResponse, UserStatus
+from telebot.formatting import escape_html
 from app.models.user_template import UserTemplate
 from app.utils.system import readable_size
 
@@ -46,7 +47,27 @@ def time_to_string(time: dt):
             return "very soon"
 
 
-def get_user_info_text(db_user: User) -> str:
+def format_online_sessions(sessions: list) -> str:
+    """
+    Renders the currently online sessions of a user as an HTML block.
+
+    Args:
+        sessions (list): Rows of {ip, device, device_name} as returned by
+            crud.get_user_online_ips.
+
+    Returns:
+        str: The formatted block, or a single dash when the user is not online.
+    """
+    if not sessions:
+        return "-"
+    lines = []
+    for session in sessions:
+        label = session["device_name"] or session["device"] or "?"
+        lines.append(f"   \u251c\u2500 <code>{escape_html(label)}</code> (<code>{escape_html(session['ip'])}</code>)")
+    return "<blockquote expandable>" + "\n".join(lines) + "</blockquote>"
+
+
+def get_user_info_text(db_user: User, online_sessions: list = None) -> str:
     user: UserResponse = UserResponse.model_validate(db_user)
     data_limit = readable_size(user.data_limit) if user.data_limit else "Unlimited"
     used_traffic = readable_size(user.used_traffic) if user.used_traffic else "-"
@@ -62,6 +83,10 @@ def get_user_info_text(db_user: User) -> str:
             on_hold_timeout}</code>)"
     else:
         expiry_text = f"📅 <b>Expiry Date:</b> <code>{expiry_date}</code> ({time_left})"
+    online_devices = format_online_sessions(online_sessions)
+    online_device_count = len({s["device"] for s in (online_sessions or [])})
+    if online_device_count == 0:
+        online_device_count = len(online_sessions or [])
     return f"""\
 {statuses[user.status]} <b>Status:</b> <code>{user.status.title()}</code>
 
@@ -74,6 +99,11 @@ def get_user_info_text(db_user: User) -> str:
 🔌 <b>Online at:</b> {online_at}
 🔄 <b>Subscription updated at:</b> {sub_updated_at}
 📱 <b>Subscription last agent:</b> <blockquote>{user.sub_last_user_agent or "-"}</blockquote>
+
+📵 <b>Device limit:</b> <code>{user.ip_limit if user.ip_limit else "Unlimited"}</code>
+
+👥 <b>Online devices ({online_device_count}):</b>
+{online_devices}
 
 📝 <b>Note:</b> <blockquote expandable>{user.note or "empty"}</blockquote>
 👨‍💻 <b>Admin:</b> <code>{db_user.admin.username if db_user.admin else "-"}</code>

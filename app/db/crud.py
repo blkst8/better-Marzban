@@ -1638,3 +1638,25 @@ def delete_stale_online_ips(db: Session, max_age_seconds: int) -> int:
 
     db.commit()
     return len(stale)
+
+
+def remove_user_online_ip(db: Session, dbuser: User, ip: str, device: str) -> None:
+    """
+    Drops a single stored session for a user.
+
+    Args:
+        db (Session): Database session.
+        dbuser (User): The user object.
+        ip (str): Source IP of the session.
+        device (str): Device fingerprint of the session.
+    """
+    removed = (
+        db.query(UserOnlineIp)
+        .filter(UserOnlineIp.user_id == dbuser.id,
+                UserOnlineIp.ip == ip,
+                UserOnlineIp.device == device)
+        .all()
+    )
+    for row in removed:
+        db.delete(row)
+    db.commit()

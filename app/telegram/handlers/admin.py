@@ -14,7 +14,7 @@ from telebot import types
 from telebot.apihelper import ApiTelegramException
 from telebot.util import extract_arguments, user_link
 
-from app import xray
+from app import logger, xray
 from app.db import GetDB, crud
 from app.models.proxy import ProxyTypes
 from app.models.user import (
@@ -582,6 +582,208 @@ def users_command(call: types.CallbackQuery):
         reply_markup=BotKeyboard.user_list(
             users, page, total_pages=total_pages)
     )
+
+
+@bot.callback_query_handler(cb_query_startswith('devices:'), is_admin=True)
+def devices_command(call: types.CallbackQuery):
+    username = call.data.split(':')[1]
+    with GetDB() as db:
+        db_user = crud.get_user(db, username)
+        if not db_user:
+            return bot.answer_callback_query(call.id, '❌ User not found.', show_alert=True)
+        sessions = [dict(ip=r.ip,
+                         device=r.device,
+                         device_name=r.device_name or '')
+                    for r in crud.get_user_online_ips(db, db_user)]
+
+    devices = {s["device"] for s in sessions}
+    over = bool(db_user.ip_limit) and len(devices) > db_user.ip_limit
+    shown_limit = db_user.ip_limit if db_user.ip_limit else "Unlimited"
+
+    text = (f'📵 <b>Device limit:</b> <code>{shown_limit}</code>\n'
+            f'👥 <b>Online devices:</b> <code>{len(devices)}</code>\n')
+    if over:
+        text += '\n⚠️ This user is over its device limit.'
+    elif not sessions:
+        text += '\nNobody is online.'
+
+    try:
+        bot.edit_message_text(
+            text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=BotKeyboard.user_devices_menu(
+                username, sessions, device_limit=db_user.ip_limit))
+    except Exception:
+        pass
+
+
+
+@bot.callback_query_handler(cb_query_startswith('kick_device:'), is_admin=True)
+def kick_device_command(call: types.CallbackQuery):
+    bot.clear_step_handler_by_chat_id(call.message.chat.id)
+    _, username, index = call.data.split(':')
+    index = int(index)
+    with GetDB() as db:
+        db_user = crud.get_user(db, username)
+        if not db_user:
+            return bot.answer_callback_query(call.id, '❌ User not found.', show_alert=True)
+        rows = crud.get_user_online_ips(db, db_user)
+    if index >= len(rows):
+        return bot.answer_callback_query(
+            call.id, '❌ That device is no longer online.', show_alert=True)
+    target = rows[index]
+    mem_store.set(
+        f'{call.message.chat.id}:kick_target',
+        (username, target.ip, target.device, target.device_name or ''))
+    label = target.device_name or target.device or '?'
+    bot.edit_message_text(
+        f'🔌 Kick <b>{label}</b> from <code>{target.ip}</code>?',
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="HTML",
+        reply_markup=BotKeyboard.kick_device_confirm(username, index))
+
+
+
+@bot.callback_query_handler(cb_query_startswith('do_kick_device:'), is_admin=True)
+def do_kick_device_command(call: types.CallbackQuery):
+    _, _, index = call.data.split(':')
+    target = mem_store.get(f'{call.message.chat.id}:kick_target')
+    if not target:
+        return bot.answer_callback_query(call.id, '❌ Nothing pending, refresh the list.', show_alert=True)
+    mem_store.delete(f'{call.message.chat.id}:kick_target')
+    kick_username, ip, device, label = target
+
+    with GetDB() as db:
+        db_user = crud.get_user(db, kick_username)
+        if not db_user:
+            return bot.answer_callback_query(call.id, '❌ User not found.', show_alert=True)
+        record = next((r for r in crud.get_user_online_ips(db, db_user)
+                       if r.ip == ip and r.device == device), None)
+
+    email = f"{db_user.id}.{db_user.username}"
+    kicked = False
+    if record is not None:
+        node = xray.nodes.get(record.node_id)
+        if node is not None and node.connected and node.started:
+            try:
+                node.kick_online_ip(email, ip, device)
+                kicked = True
+            except Exception:
+                logger.exception(
+                    f'Failed to kick {ip} ({device}) of user {kick_username}')
+        crud.remove_user_online_ip(db, db_user, ip, device)
+
+    bot.answer_callback_query(
+        call.id,
+        "✅ Device kicked." if kicked else "⚠️ Node did not confirm; row removed.")
+
+    msg = bot.send_message(
+        call.message.chat.id,
+        f'✅ Kicked <b>{label}</b> from <code>{ip}</code>.',
+        parse_mode="HTML")
+    schedule_delete_message(call.message.chat.id, msg.message_id)
+
+    with GetDB() as db:
+        db_user = crud.get_user(db, kick_username)
+        sessions = [dict(ip=r.ip, device=r.device, device_name=r.device_name or '')
+                    for r in crud.get_user_online_ips(db, db_user)]
+
+    devices = {s["device"] for s in sessions}
+    try:
+        bot.edit_message_text(
+            f'📵 <b>Device limit:</b> <code>{db_user.ip_limit or "Unlimited"}</code>\n'
+            f'👥 <b>Online devices:</b> <code>{len(devices)}</code>',
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=BotKeyboard.user_devices_menu(
+                kick_username, sessions, device_limit=db_user.ip_limit))
+    except Exception:
+        pass
+
+
+
+@bot.callback_query_handler(cb_query_startswith('set_device_limit:'), is_admin=True)
+def set_device_limit_command(call: types.CallbackQuery):
+    username = call.data.split(':')[1]
+    with GetDB() as db:
+        db_user = crud.get_user(db, username)
+        if not db_user:
+            return bot.answer_callback_query(call.id, '❌ User not found.', show_alert=True)
+        current = db_user.ip_limit
+    schedule_delete_message(call.message.chat.id, call.message.id)
+    cleanup_messages(call.message.chat.id)
+    mem_store.set(f'{call.message.chat.id}:username', username)
+    msg = bot.send_message(
+        call.message.chat.id,
+        f'📵 Current device limit: <code>{current or "Unlimited"}</code>\n\n'
+        'Send the new device limit (devices):\n'
+        '⚠️ Send 0 for unlimited.',
+        parse_mode="HTML",
+        reply_markup=BotKeyboard.inline_cancel_action(f'user:{username}'))
+    schedule_delete_message(call.message.chat.id, msg.id)
+    bot.register_next_step_handler(msg, set_device_limit_step)
+
+
+def set_device_limit_step(message: types.Message):
+    try:
+        limit = int(message.text)
+    except ValueError:
+        wait_msg = bot.send_message(message.chat.id, '❌ Device limit must be a number.')
+        schedule_delete_message(message.chat.id, wait_msg.id)
+        schedule_delete_message(message.chat.id, message.id)
+        return bot.register_next_step_handler(wait_msg, set_device_limit_step)
+    if limit < 0:
+        wait_msg = bot.send_message(
+            message.chat.id, '❌ Device limit must be greater or equal to 0.')
+        schedule_delete_message(message.chat.id, wait_msg.id)
+        schedule_delete_message(message.chat.id, message.id)
+        return bot.register_next_step_handler(wait_msg, set_device_limit_step)
+    username = mem_store.get(f'{message.chat.id}:username')
+    if not username:
+        cleanup_messages(message.chat.id)
+        return bot.reply_to(message, '❌ Something went wrong!\n restart bot /start')
+    mem_store.delete(f'{message.chat.id}:username')
+
+    with GetDB() as db:
+        db_user = crud.get_user(db, username)
+        last_limit = db_user.ip_limit
+        # 0 must reach crud as a real value: passing None would mean
+        # "leave unchanged" and the old limit would survive.
+        modify = UserModify(ip_limit=limit)
+        db_user = crud.update_user(db, db_user, modify)
+        user = UserResponse.model_validate(db_user)
+        xray.operations.update_user(db_user)
+        sessions = [dict(ip=r.ip, device=r.device, device_name=r.device_name or '')
+                    for r in crud.get_user_online_ips(db, db_user)]
+
+    bot.reply_to(
+        message,
+        get_user_info_text(db_user, online_sessions=sessions),
+        parse_mode="html",
+        reply_markup=BotKeyboard.user_menu(
+            user_info={'status': user.status, 'username': user.username}))
+    if TELEGRAM_LOGGER_CHANNEL_ID:
+        text = (
+            '📵 <b>#Device_Limit_Change #From_Bot</b>\n'
+            '➖➖➖➖➖➖➖➖➖\n'
+            '<b>Username :</b> <code>%s</code>\n'
+            '<b>Last Device Limit :</b> <code>%s</code>\n'
+            '<b>New Device Limit :</b> <code>%s</code>\n'
+            '➖➖➖➖➖➖➖➖➖\n'
+            '<b>By :</b> <a href="tg://user?id=%d">%s</a>'
+        ) % (user.username,
+             last_limit if last_limit else "Unlimited",
+             user.ip_limit if user.ip_limit else "Unlimited",
+             message.chat.id,
+             message.from_user.full_name)
+        try:
+            bot.send_message(TELEGRAM_LOGGER_CHANNEL_ID, text, 'HTML')
+        except ApiTelegramException:
+            pass
 
 
 @bot.callback_query_handler(cb_query_startswith('edit_note:'), is_admin=True)

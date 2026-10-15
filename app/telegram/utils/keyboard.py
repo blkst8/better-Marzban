@@ -124,6 +124,10 @@ class BotKeyboard:
             types.InlineKeyboardButton(
                 text='🔋 Charge',
                 callback_data=f"charge:{user_info['username']}"
+            ),
+            types.InlineKeyboardButton(
+                text='📱 Devices',
+                callback_data=f"devices:{user_info['username']}"
             )
         )
         if with_back:
@@ -231,6 +235,54 @@ class BotKeyboard:
                 text="🔙 Cancel",
                 callback_data=callback_data
             )
+        )
+        return keyboard
+
+    @staticmethod
+    def user_devices_menu(username: str, sessions: list, device_limit: int = None):
+        "Lists the live devices of a user with one kick button per device."
+        keyboard = types.InlineKeyboardMarkup()
+        for index, session in enumerate(sessions):
+            label = session["device_name"] or session["device"] or "?"
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    text=f'{label} ({session["ip"]})',
+                    callback_data="noop"
+                ),
+                types.InlineKeyboardButton(
+                    text="🔌 Kick",
+                    callback_data=f"kick_device:{username}:{index}"
+                ),
+            )
+        shown_limit = device_limit if device_limit else "Unlimited"
+        keyboard.add(
+            types.InlineKeyboardButton(
+                text=f"📵 Device limit: {shown_limit}",
+                callback_data=f"set_device_limit:{username}"
+            ),
+        )
+        keyboard.add(
+            types.InlineKeyboardButton(
+                text="♻️ Refresh", callback_data=f"devices:{username}"
+            ),
+            types.InlineKeyboardButton(
+                text="🔙 Back", callback_data=f"user:{username}"
+            ),
+        )
+        return keyboard
+
+    @staticmethod
+    def kick_device_confirm(username: str, index: int):
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton(
+                text='Yes',
+                callback_data=f"do_kick_device:{username}:{index}"
+            ),
+            types.InlineKeyboardButton(
+                text='No',
+                callback_data=f"devices:{username}"
+            ),
         )
         return keyboard
 

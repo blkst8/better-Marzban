@@ -1,0 +1,30 @@
+{
+  "log": { "loglevel": "warning" },
+  "routing": {
+    "rules": [
+      { "ip": ["geoip:private"], "outboundTag": "BLOCK", "type": "field" }
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "VLESS TCP",
+      "listen": "0.0.0.0",
+      "port": 1080,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none",
+        "fallbacks": []
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "none",
+        "tcpSettings": { "acceptProxyProtocol": false }
+      }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "DIRECT" },
+    { "protocol": "blackhole", "tag": "BLOCK" }
+  ]
+}

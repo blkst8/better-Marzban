@@ -209,3 +209,38 @@ def report_login(username: str, password: str, client_ip: str, status: str):
         client_ip=escape_html(client_ip)
     )
     return report(text=text)
+
+
+def report_ip_limit_breach(username: str, limit: int, devices: list, admin: Admin = None):
+    """
+    Notifies admins that a user exceeded its device limit.
+
+    Args:
+        username (str): The user's username.
+        limit (int): The configured device limit.
+        devices (list): Device fingerprints currently online.
+        admin (Admin, optional): The admin the user belongs to.
+    """
+    text = (
+        '⚠️ <b>#Device_Limit_Breach</b>\n'
+        '➖➖➖➖➖➖➖➖➖\n'
+        '<b>Username</b> : <code>%s</code>\n'
+        '<b>Device Limit</b> : <code>%d</code>\n'
+        '<b>Online Devices</b> : <code>%d</code>\n'
+        '➖➖➖➖➖➖➖➖➖\n'
+        'The excess sessions are being dropped.\n'
+        '<b>Belongs To</b> : <code>%s</code>\n'
+    ) % (
+        escape_html(username),
+        limit,
+        len(set(devices)),
+        escape_html(admin.username) if admin else "-",
+    )
+
+    return report(
+        chat_id=admin.telegram_id if admin and admin.telegram_id else None,
+        text=text,
+        keyboard=BotKeyboard.user_menu(
+            {'username': username, 'id': None, 'status': 'active'}, with_back=False
+        ),
+    )
