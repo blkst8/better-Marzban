@@ -131,6 +131,12 @@ NOTIFY_DAYS_LEFT = config(
 
 DISABLE_RECORDING_NODE_USAGE = config("DISABLE_RECORDING_NODE_USAGE", cast=bool, default=False)
 
+# Skips polling nodes for their online IPs entirely.
+DISABLE_RECORDING_ONLINE_IPS = config("DISABLE_RECORDING_ONLINE_IPS", cast=bool, default=False)
+
+# Drops the excess sessions of users that are online from more IPs than their limit.
+ENFORCE_IP_LIMIT = config("ENFORCE_IP_LIMIT", cast=bool, default=True)
+
 # headers: profile-update-interval, support-url, profile-title
 SUB_UPDATE_INTERVAL = config("SUB_UPDATE_INTERVAL", default="12")
 SUB_SUPPORT_URL = config("SUB_SUPPORT_URL", default="https://t.me/")
@@ -145,4 +151,12 @@ JOB_CORE_HEALTH_CHECK_INTERVAL = config("JOB_CORE_HEALTH_CHECK_INTERVAL", cast=i
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
 JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=10)
 JOB_REVIEW_USERS_INTERVAL = config("JOB_REVIEW_USERS_INTERVAL", cast=int, default=10)
+JOB_RECORD_ONLINE_IPS_INTERVAL = config("JOB_RECORD_ONLINE_IPS_INTERVAL", cast=int, default=30)
+JOB_SEND_NOTIFICATIONS_INTERVAL = config("JOB_SEND_NOTIFICATIONS_INTERVAL", cast=int, default=30)
+
+# Sessions not refreshed for this long are considered gone, so a node that
+# goes unreachable does not keep its sessions listed forever.
+ONLINE_IP_STALE_INTERVAL = config(
+    "ONLINE_IP_STALE_INTERVAL", cast=int, default=JOB_RECORD_ONLINE_IPS_INTERVAL * 3
+)
 JOB_SEND_NOTIFICATIONS_INTERVAL = config("JOB_SEND_NOTIFICATIONS_INTERVAL", cast=int, default=30)

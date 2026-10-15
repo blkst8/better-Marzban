@@ -37,6 +37,7 @@
   "hostsDialog.addHost": "Добавить хост",
   "hostsDialog.advancedOptions": "Дополнительные опции",
   "hostsDialog.allowinsecure": "Allow Insecure",
+  "hostsDialog.useSniAsHost": "Use sni as host",
   "hostsDialog.alpn": "ALPN",
   "hostsDialog.apply": "Применить",
   "hostsDialog.currentServer": "IP текущего сервера",
@@ -187,5 +188,9 @@
   "usersTable.noUser": "В системе нет созданных пользователей",
   "usersTable.noUserMatched": "Похоже, нет пользователя, соответствующего вашему запросу",
   "usersTable.status": "Статус",
-  "usersTable.total": "Всего"
+  "usersTable.total": "Всего",
+  "userDialog.ipLimit": "Лимит устройств",
+  "userDialog.ipLimitHint": "Максимальное количество устройств, которые могут быть онлайн одновременно. Оставьте пустым без ограничений.",
+  "usersTable.onlineIps": "Устройства онлайн",
+  "usersTable.overIpLimit": "Превышен лимит устройств"
 }

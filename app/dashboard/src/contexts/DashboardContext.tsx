@@ -38,6 +38,7 @@ type DashboardStateType = {
     users: User[];
     total: number;
   };
+  onlineIps: Record<string, OnlineSession[]>;
   inbounds: Inbounds;
   loading: boolean;
   filters: FilterType;
@@ -55,6 +56,7 @@ type DashboardStateType = {
   onDeletingUser: (user: User | null) => void;
   onResetAllUsage: (isResetingAllUsage: boolean) => void;
   refetchUsers: () => void;
+  refetchOnlineIps: () => void;
   resetAllUsage: () => Promise<void>;
   onFilterChange: (filters: Partial<FilterType>) => void;
   deleteUser: (user: User) => Promise<void>;
@@ -85,6 +87,22 @@ const fetchUsers = (query: FilterType): Promise<User[]> => {
     });
 };
 
+export type OnlineSession = {
+  ip: string;
+  device: string;
+  device_name: string;
+};
+
+const fetchOnlineIps = (): Promise<void> => {
+  return fetch("/users/online-ips")
+    .then((onlineIps: Record<string, OnlineSession[]>) => {
+      useDashboard.setState({ onlineIps });
+    })
+    .catch(() => {
+      useDashboard.setState({ onlineIps: {} });
+    });
+};
+
 export const fetchInbounds = () => {
   return fetch("/inbounds")
     .then((inbounds: Inbounds) => {
@@ -109,6 +127,7 @@ export const useDashboard = create(
       users: [],
       total: 0,
     },
+    onlineIps: {},
     loading: true,
     isResetingAllUsage: false,
     isEditingHosts: false,
@@ -125,6 +144,9 @@ export const useDashboard = create(
     isEditingCore: false,
     refetchUsers: () => {
       fetchUsers(get().filters);
+    },
+    refetchOnlineIps: () => {
+      fetchOnlineIps();
     },
     resetAllUsage: () => {
       return fetch(`/users/reset`, { method: "POST" }).then(() => {

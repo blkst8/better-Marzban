@@ -45,11 +45,13 @@ import { useTranslation } from "react-i18next";
 import { User } from "types/User";
 import { formatBytes } from "utils/formatByte";
 import { OnlineBadge } from "./OnlineBadge";
+import { OnlineIpsCell } from "./OnlineIpsCell";
 import { OnlineStatus } from "./OnlineStatus";
 import { Pagination } from "./Pagination";
 import { StatusBadge } from "./StatusBadge";
 
 const EmptySectionIcon = chakra(AddFileIcon);
+const ONLINE_IPS_REFRESH_INTERVAL = 30_000;
 
 const iconProps = {
   baseStyle: {
@@ -187,6 +189,15 @@ export const Sort: FC<SortType> = ({ sort, column }) => {
 };
 type UsersTableProps = {} & TableProps;
 export const UsersTable: FC<UsersTableProps> = (props) => {
+  // One bulk fetch for the whole table, refreshed on a timer, rather than a
+  // duplicate request per row.
+  const refetchOnlineIps = useDashboard((state) => state.refetchOnlineIps);
+  useEffect(() => {
+    refetchOnlineIps();
+    const interval = setInterval(refetchOnlineIps, ONLINE_IPS_REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, [refetchOnlineIps]);
+
   const {
     filters,
     users: { users },
@@ -574,6 +585,14 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
             <Th
               position="sticky"
               top={{ base: "unset", md: top }}
+              width="130px"
+              minW="110px"
+            >
+              {t("usersTable.onlineIps")}
+            </Th>
+            <Th
+              position="sticky"
+              top={{ base: "unset", md: top }}
               width="200px"
               minW="180px"
             />
@@ -612,6 +631,9 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                       colorScheme={statusColors[user.status].bandWidthColor}
                     />
                   </Td>
+                  <Td width="130px" minW="110px">
+                    <OnlineIpsCell user={user} />
+                  </Td>
                   <Td width="200px" minW="180px">
                     <ActionButtons user={user} />
                   </Td>
@@ -620,7 +642,7 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
             })}
           {users.length == 0 && (
             <Tr>
-              <Td colSpan={4}>
+              <Td colSpan={5}>
                 <EmptySection isFiltered={isFiltered} />
               </Td>
             </Tr>

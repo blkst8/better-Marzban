@@ -89,6 +89,29 @@ def add_user(dbuser: "DBUser"):
                 if node.connected and node.started:
                     _add_user_to_inbound(node.api, inbound_tag, account)
 
+    _push_ip_limit(dbuser)
+
+
+@threaded_function
+def _set_ip_limit_on_node(node: XRayNode, email: str, ip_limit: int):
+    try:
+        node.set_user_ip_limit(email, ip_limit)
+    except Exception:
+        pass
+
+
+def _push_ip_limit(dbuser: "DBUser") -> None:
+    """
+    Tells every connected node how many IPs a user may be online from at once.
+
+    Args:
+        dbuser (DBUser): The user whose limit changed.
+    """
+    email = f"{dbuser.id}.{dbuser.username}"
+    for node in list(xray.nodes.values()):
+        if node.connected and node.started:
+            _set_ip_limit_on_node(node, email, dbuser.ip_limit or 0)
+
 
 def remove_user(dbuser: "DBUser"):
     email = f"{dbuser.id}.{dbuser.username}"
@@ -143,6 +166,8 @@ def update_user(dbuser: "DBUser"):
         for node in list(xray.nodes.values()):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
+
+    _push_ip_limit(dbuser)
 
 
 def remove_node(node_id: int):

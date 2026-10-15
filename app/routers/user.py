@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Union
-
+from typing import Dict, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 
@@ -12,11 +11,14 @@ from app.models.user import (
     UserCreate,
     UserModify,
     UserResponse,
+    UserOnlineIpResponse,
+    UserOnlineIpsResponse,
     UsersResponse,
     UserStatus,
     UsersUsagesResponse,
     UserUsagesResponse,
 )
+from app.db.models import Node
 from app.utils import report, responses
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
@@ -311,6 +313,51 @@ def get_users_usage(
     )
 
     return {"usages": usages}
+
+
+@router.get("/users/online-ips", response_model=Dict[str, List[Dict[str, str]]])
+def get_users_online_ips(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Get a mapping of username to that user's currently online sessions."""
+    return crud.get_all_users_online_ips(db=db)
+
+
+@router.get("/user/{username}/online-ips", response_model=UserOnlineIpsResponse)
+def get_user_online_ips(
+    dbuser: UserResponse = Depends(get_validated_user),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Get the sessions a single user is currently online from, newest first."""
+    records = crud.get_user_online_ips(db=db, dbuser=dbuser)
+    node_names = {node.id: node.name for node in db.query(Node).all()}
+
+    online_ips = [
+        UserOnlineIpResponse(
+            ip=record.ip,
+            device=record.device,
+            device_name=record.device_name or "",
+            node_id=record.node_id,
+            node_name=node_names.get(record.node_id, ""),
+            first_seen_at=record.first_seen_at,
+            last_seen_at=record.last_seen_at,
+        )
+        for record in records
+    ]
+
+    ip_limit = dbuser.ip_limit or None
+    # The limit counts devices, not addresses: several devices sharing one
+    # address each consume their own share.
+    online_devices = len({record.device for record in records})
+    return {
+        "username": dbuser.username,
+        "ip_limit": ip_limit,
+        "online_devices": online_devices,
+        "online_ips": online_ips,
+        "over_limit": bool(ip_limit) and online_devices > ip_limit,
+    }
 
 
 @router.put("/user/{username}/set-owner", response_model=UserResponse)

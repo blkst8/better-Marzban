@@ -37,6 +37,7 @@
   "hostsDialog.addHost": "添加主机",
   "hostsDialog.advancedOptions": "高级选项",
   "hostsDialog.allowinsecure": "允许不安全连接",
+  "hostsDialog.useSniAsHost": "Use sni as host",
   "hostsDialog.alpn": "ALPN",
   "hostsDialog.apply": "保存",
   "hostsDialog.currentServer": "当前服务器的 IP 地址",
@@ -189,4 +190,8 @@
   "usersTable.status": "状态",
   "usersTable.sortByExpire": "按过期时间排序",
   "usersTable.total": "总共",
+  "userDialog.ipLimit": "设备数限制",
+  "userDialog.ipLimitHint": "允许同时在线的设备数量上限。留空表示不限制。",
+  "usersTable.onlineIps": "在线设备",
+  "usersTable.overIpLimit": "超出设备数限制"
 }

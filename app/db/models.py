@@ -87,6 +87,16 @@ class User(Base):
     on_hold_expire_duration = Column(BigInteger, nullable=True, default=None)
     on_hold_timeout = Column(DateTime, nullable=True, default=None)
 
+    # Maximum number of distinct IPs allowed to be online simultaneously.
+    # NULL or 0 means unlimited.
+    ip_limit = Column(Integer, nullable=True, default=None)
+
+    online_ips = relationship(
+        "UserOnlineIp",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
     # * Positive values: User will be deleted after the value of this field in days automatically.
     # * Negative values: User won't be deleted automatically at all.
     # * NULL: Uses global settings.
@@ -169,8 +179,30 @@ class NextPlan(Base):
     expire = Column(Integer, nullable=True)
     add_remaining_traffic = Column(Boolean, nullable=False, default=False, server_default='0')
     fire_on_either = Column(Boolean, nullable=False, default=True, server_default='0')
-
     user = relationship("User", back_populates="next_plan")
+
+
+class UserOnlineIp(Base):
+    __tablename__ = "user_online_ips"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    user = relationship("User", back_populates="online_ips")
+    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True)
+    ip = Column(String(45), nullable=False)
+    # Fingerprint reported by the node for the connected device. Two devices
+    # behind one NAT address differ only by this value.
+    device = Column(String(64), nullable=False, default="")
+    # Human readable label the node derives, e.g. "iPhone · iOS 17.2".
+    device_name = Column(String(128), nullable=True, default=None)
+    first_seen_at = Column(DateTime, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "node_id", "ip", "device", name="uq_user_online_ips_session"
+        ),
+    )
 
 
 class UserTemplate(Base):

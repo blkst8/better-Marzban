@@ -365,6 +365,7 @@ class XRayConfig(dict):
             query = db.query(
                 db_models.User.id,
                 db_models.User.username,
+                db_models.User.ip_limit,
                 func.lower(db_models.Proxy.type).label('type'),
                 db_models.Proxy.settings,
                 func.group_concat(db_models.excluded_inbounds_association.c.inbound_tag).label('excluded_inbound_tags')
@@ -380,7 +381,9 @@ class XRayConfig(dict):
                 db_models.User.id,
                 db_models.User.username,
                 db_models.Proxy.settings,
+                db_models.User.ip_limit,
             )
+
             result = query.all()
 
             grouped_data = defaultdict(list)
@@ -390,7 +393,8 @@ class XRayConfig(dict):
                     row.id,
                     row.username,
                     row.settings,
-                    [i for i in row.excluded_inbound_tags.split(',') if i] if row.excluded_inbound_tags else None
+                    [i for i in row.excluded_inbound_tags.split(',') if i] if row.excluded_inbound_tags else None,
+                    row.ip_limit,
                 ))
 
             for proxy_type, rows in grouped_data.items():
@@ -403,7 +407,7 @@ class XRayConfig(dict):
                     clients = config.get_inbound(inbound['tag'])['settings']['clients']
 
                     for row in rows:
-                        user_id, username, settings, excluded_inbound_tags = row
+                        user_id, username, settings, excluded_inbound_tags, ip_limit = row
 
                         if excluded_inbound_tags and inbound['tag'] in excluded_inbound_tags:
                             continue
@@ -412,6 +416,11 @@ class XRayConfig(dict):
                             "email": f"{user_id}.{username}",
                             **settings
                         }
+
+                        if ip_limit:
+                            # Marzban-node reads this to enforce the limit at connect
+                            # time; Xray core ignores unknown client keys.
+                            client["ipLimit"] = ip_limit
 
                         # XTLS currently only supports transmission methods of TCP and mKCP
                         if client.get('flow') and (

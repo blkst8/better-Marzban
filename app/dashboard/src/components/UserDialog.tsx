@@ -115,6 +115,7 @@ const getDefaultValues = (): FormType => {
     data_limit_reset_strategy: "no_reset",
     status: "active",
     on_hold_expire_duration: null,
+    ip_limit: null,
     note: "",
     inbounds,
     proxies: {
@@ -174,6 +175,12 @@ const baseSchema = {
       return 0;
     }),
   expire: z.number().nullable(),
+  ip_limit: z
+    .string()
+    .min(0)
+    .or(z.number())
+    .nullable()
+    .transform((str) => (str ? Number(str) : null)),
   data_limit_reset_strategy: z.string(),
   inbounds: z.record(z.string(), z.array(z.string())).transform((ins) => {
     Object.keys(ins).forEach((protocol) => {
@@ -329,7 +336,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
           Object.keys(err.response._data.detail).forEach((key) => {
             setError(err?.response._data.detail[key] as string);
             form.setError(
-              key as "proxies" | "username" | "data_limit" | "expire",
+              key as "proxies" | "username" | "data_limit" | "expire" | "ip_limit",
               {
                 type: "custom",
                 message: err.response._data.detail[key],
@@ -538,6 +545,31 @@ export const UserDialog: FC<UserDialogProps> = () => {
                             );
                           }}
                         />
+                      </FormControl>
+
+                      <FormControl mb={"10px"}>
+                        <FormLabel>{t("userDialog.ipLimit")}</FormLabel>
+                        <Controller
+                          control={form.control}
+                          name="ip_limit"
+                          render={({ field }) => {
+                            return (
+                              <Input
+                                type="number"
+                                min={0}
+                                size="sm"
+                                borderRadius="6px"
+                                onChange={field.onChange}
+                                disabled={disabled}
+                                error={form.formState.errors.ip_limit?.message}
+                                value={field.value ? String(field.value) : ""}
+                              />
+                            );
+                          }}
+                        />
+                        <Text fontSize="xs" color="gray.500" mt="4px">
+                          {t("userDialog.ipLimitHint")}
+                        </Text>
                       </FormControl>
                       <Collapse
                         in={!!(dataLimit && dataLimit > 0)}

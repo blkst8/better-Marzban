@@ -5,6 +5,7 @@ from . import (
     node, 
     subscription, 
     system, 
+    metrics,
     user_template, 
     user,
     home,
@@ -19,6 +20,7 @@ routers = [
     subscription.router,
     system.router,
     user_template.router,
+    metrics.router,
     user.router,
     home.router,
 ]

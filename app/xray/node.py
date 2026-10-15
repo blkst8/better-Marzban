@@ -6,7 +6,7 @@ import threading
 import time
 from collections import deque
 from contextlib import contextmanager
-from typing import List
+from typing import List, Union
 
 import grpc
 import requests
@@ -162,6 +162,79 @@ class ReSTXRayNode:
     def get_version(self):
         res = self.make_request("/", timeout=3)
         return res.get('core_version')
+
+    def get_online_ips(self) -> dict:
+        """
+        Asks the node which sessions are live: which user, from which IP, on
+        which device.
+
+        Requires Marzban-node >= the version that implements `POST /online-ips`.
+
+        Returns:
+            dict: {user_id: [{"ip": ..., "device": ..., "device_name": ...}, ...]}
+        """
+        if not self.connected:
+            self.connect()
+
+        res = self.make_request("/online-ips", timeout=10)
+        users = res.get("users") or {}
+        return {
+            str(user_id): [
+                self._normalize_session(entry) for entry in sessions
+            ]
+            for user_id, sessions in users.items()
+        }
+
+    @staticmethod
+    def _normalize_session(entry) -> dict:
+        """
+        Accepts either a bare IP string or a full session object and returns the
+        canonical shape, so a node that cannot report a device still works.
+        """
+        if isinstance(entry, str):
+            return {"ip": entry, "device": "", "device_name": ""}
+
+        return {
+            "ip": str(entry.get("ip") or ""),
+            "device": str(entry.get("device") or ""),
+            "device_name": str(entry.get("device_name") or ""),
+        }
+
+    def set_user_ip_limit(self, email: str, ip_limit: Union[int, None]) -> None:
+        """
+        Tells the node how many distinct devices a user may be online from.
+
+        Requires Marzban-node >= the version that implements `POST /ip-limit`.
+
+        Args:
+            email (str): The user's core email, i.e. "{id}.{username}".
+            ip_limit (Union[int, None]): Maximum concurrent devices, 0 for unlimited.
+        """
+        if not self.connected:
+            self.connect()
+
+        self.make_request(
+            "/ip-limit", timeout=10, email=email, ip_limit=(ip_limit or 0)
+        )
+
+    def kick_online_ip(self, email: str, ip: str, device: str = "") -> None:
+        """
+        Drops a single live session identified by its user, source IP and device.
+
+        Requires Marzban-node >= the version that implements `POST /kick-online-ip`.
+
+        Args:
+            email (str): The user's core email, i.e. "{id}.{username}".
+            ip (str): The source IP to disconnect.
+            device (str): The device fingerprint, which is what disambiguates
+                several devices sharing one IP.
+        """
+        if not self.connected:
+            self.connect()
+
+        self.make_request(
+            "/kick-online-ip", timeout=10, email=email, ip=ip, device=device
+        )
 
     def start(self, config: XRayConfig):
         if not self.connected:

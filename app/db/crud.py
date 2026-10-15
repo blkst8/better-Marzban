@@ -3,6 +3,7 @@ Functions for managing proxy hosts, users, user templates, nodes, and administra
 """
 
 from datetime import datetime, timedelta
+from collections import defaultdict
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -27,7 +28,7 @@ from app.db.models import (
     System,
     User,
     UserTemplate,
-    UserUsageResetLogs,
+    UserOnlineIp,
 )
 from app.models.admin import AdminCreate, AdminModify, AdminPartialModify
 from app.models.node import NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
@@ -385,6 +386,7 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
         data_limit=(user.data_limit or None),
         expire=(user.expire or None),
         admin=admin,
+        ip_limit=user.ip_limit,
         data_limit_reset_strategy=user.data_limit_reset_strategy,
         note=user.note,
         on_hold_expire_duration=(user.on_hold_expire_duration or None),
@@ -514,6 +516,9 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
 
     if modify.on_hold_expire_duration is not None:
         dbuser.on_hold_expire_duration = modify.on_hold_expire_duration
+
+    if modify.ip_limit is not None:
+        dbuser.ip_limit = modify.ip_limit or None
 
     if modify.next_plan is not None:
         dbuser.next_plan = NextPlan(
@@ -1498,3 +1503,138 @@ def count_online_users(db: Session, hours: int = 24):
     query = db.query(func.count(User.id)).filter(User.online_at.isnot(
         None), User.online_at >= twenty_four_hours_ago)
     return query.scalar()
+
+
+def get_user_online_ips(db: Session, dbuser: User) -> list:
+    """
+    Returns the online IP records of a user, newest activity first.
+
+    Args:
+        db (Session): Database session.
+        dbuser (User): The user object.
+
+    Returns:
+        list: List of UserOnlineIp rows.
+    """
+    return db.query(UserOnlineIp) \
+        .filter(UserOnlineIp.user_id == dbuser.id) \
+        .order_by(UserOnlineIp.first_seen_at.desc(), UserOnlineIp.id.desc()) \
+        .all()
+
+
+def get_all_users_online_ips(db: Session) -> dict:
+    """
+    Returns a mapping of username to that user's currently online sessions.
+
+    Args:
+        db (Session): Database session.
+
+    Returns:
+        dict: {username: [{ip, device, device_name}, ...]}
+    """
+    rows = db.query(User.username, UserOnlineIp) \
+        .join(UserOnlineIp, UserOnlineIp.user_id == User.id).all()
+
+    result = defaultdict(list)
+    for username, session in rows:
+        result[username].append({
+            "ip": session.ip,
+            "device": session.device,
+            "device_name": session.device_name,
+        })
+    return dict(result)
+
+
+def count_online_devices(db: Session, user_id: int) -> int:
+    """
+    Counts the distinct devices a user is online from, across every node.
+
+    Args:
+        db (Session): Database session.
+        user_id (int): The user's database id.
+
+    Returns:
+        int: Number of distinct devices.
+    """
+    return db.query(func.count(func.distinct(UserOnlineIp.device))) \
+        .filter(UserOnlineIp.user_id == user_id).scalar() or 0
+
+
+def sync_node_online_ips(db: Session, node_id: Union[int, None], reported: dict) -> int:
+    """
+    Replaces the stored sessions of every user on a node with a fresh report.
+
+    Args:
+        db (Session): Database session.
+        node_id (Union[int, None]): The node the report came from.
+        reported (dict): {user_id: [{ip, device, device_name}, ...]}
+
+    Returns:
+        int: Number of users seen online on this node.
+    """
+    now = datetime.utcnow()
+
+    # A node can still report a user that has since been deleted from the panel.
+    # Recording those would leave rows that nothing ever cleans up.
+    live_ids = {row[0] for row in db.query(User.id).all()}
+    reported = {
+        user_id: sessions for user_id, sessions in reported.items()
+        if int(user_id) in live_ids
+    }
+
+    existing = db.query(UserOnlineIp).filter(UserOnlineIp.node_id == node_id).all()
+    existing_keys = {
+        (row.user_id, row.ip, row.device): row for row in existing
+    }
+
+    seen = set()
+    for user_id, sessions in reported.items():
+        for session in sessions:
+            key = (int(user_id), session["ip"], session["device"])
+            seen.add(key)
+            row = existing_keys.get(key)
+            if row is None:
+                db.add(UserOnlineIp(
+                    user_id=int(user_id),
+                    node_id=node_id,
+                    ip=session["ip"],
+                    device=session["device"],
+                    device_name=session["device_name"],
+                    first_seen_at=now,
+                    last_seen_at=now,
+                ))
+            else:
+                row.last_seen_at = now
+                row.device_name = session["device_name"]
+
+    for key, row in existing_keys.items():
+        if key not in seen:
+            db.delete(row)
+
+    db.commit()
+    return len(reported)
+
+
+def delete_stale_online_ips(db: Session, max_age_seconds: int) -> int:
+    """
+    Deletes sessions that no poll has refreshed recently.
+
+    The per-poll snapshot already removes disconnected sessions, but a node that
+    goes unreachable never reports again, so its rows would linger forever.
+
+    Args:
+        db (Session): Database session.
+        max_age_seconds (int): Age after which a session is considered stale.
+
+    Returns:
+        int: Number of deleted rows.
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+    stale = db.query(UserOnlineIp) \
+        .filter(UserOnlineIp.last_seen_at < cutoff).all()
+
+    for row in stale:
+        db.delete(row)
+
+    db.commit()
+    return len(stale)

@@ -189,5 +189,9 @@
   "usersTable.noUserMatched": "没有找到您搜索的用户",
   "usersTable.status": "状态",
   "usersTable.sortByExpire": "按过期时间排序",
-  "usersTable.total": "总共"
+  "usersTable.total": "总共",
+  "userDialog.ipLimit": "设备数限制",
+  "userDialog.ipLimitHint": "允许同时在线的设备数量上限。留空表示不限制。",
+  "usersTable.onlineIps": "在线设备",
+  "usersTable.overIpLimit": "超出设备数限制"
 }

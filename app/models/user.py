@@ -74,6 +74,11 @@ class User(BaseModel):
     on_hold_timeout: Optional[Union[datetime, None]] = Field(None, nullable=True)
 
     auto_delete_in_days: Optional[int] = Field(None, nullable=True)
+    # Maximum number of distinct IPs allowed online at the same time.
+    # 0 or None means unlimited.
+    ip_limit: Optional[int] = Field(
+        ge=0, default=None, description="ip_limit can be 0 or greater, 0 means unlimited"
+    )
 
     next_plan: Optional[NextPlanModel] = Field(None, nullable=True)
 
@@ -86,6 +91,14 @@ class User(BaseModel):
         if isinstance(v, int):  # Allow integers directly
             return v
         raise ValueError("data_limit must be an integer or a float, not a string")  # Reject strings
+
+    @field_validator("ip_limit", mode="before")
+    def validate_ip_limit(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError("ip_limit must be an integer or a float, not a string")
+        return int(v)
 
     @field_validator("proxies", mode="before")
     def validate_proxies(cls, v, values, **kwargs):
@@ -333,6 +346,7 @@ class SubscriptionUserResponse(UserResponse):
     note: str | None = Field(None, exclude=True)
     inbounds: Dict[ProxyTypes, List[str]] | None = Field(None, exclude=True)
     auto_delete_in_days: int | None = Field(None, exclude=True)
+    ip_limit: int | None = Field(None, exclude=True)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -364,3 +378,21 @@ class UserUsagesResponse(BaseModel):
 
 class UsersUsagesResponse(BaseModel):
     usages: List[UserUsageResponse]
+
+class UserOnlineIpResponse(BaseModel):
+    ip: str
+    device: str = ""
+    device_name: str = ""
+    node_id: Union[int, None] = None
+    node_name: str = ""
+    first_seen_at: datetime
+    last_seen_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserOnlineIpsResponse(BaseModel):
+    username: str
+    ip_limit: Optional[int] = None
+    online_devices: int = 0
+    online_ips: List[UserOnlineIpResponse] = []
+    over_limit: bool = False
