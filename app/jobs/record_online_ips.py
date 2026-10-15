@@ -1,4 +1,5 @@
 import os
+import ipaddress
 import re
 import time
 
@@ -180,7 +181,15 @@ def _record_main_host(db) -> None:
         user_id = parse_access_email(match.group("email"))
         if user_id is None:
             continue
-        _main_sightings[(user_id, match.group("ip"))] = now
+        ip = match.group("ip").strip("[]")
+        # Traffic dialed from the VPS itself (loopback) is never a remote
+        # device; keepalives would otherwise pin a phantom session forever.
+        try:
+            if ipaddress.ip_address(ip).is_loopback:
+                continue
+        except ValueError:
+            continue
+        _main_sightings[(user_id, ip)] = now
 
     # A long-lived connection does not re-log its acceptance, so the sighting
     # window is what turns the append-only log into a "live" snapshot.

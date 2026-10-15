@@ -124,6 +124,22 @@ def test_main_host_rows_are_synced_with_node_id_none(db, tmp_path, monkeypatch):
     assert rows[0].device == "198.51.100.7"
 
 
+def test_loopback_traffic_is_not_recorded(db, tmp_path, monkeypatch):
+    user = make_user(db, "mainhost4")
+    log = tmp_path / "access.log"
+    local = LINE_WITH_FROM.replace("198.51.100.7", "127.0.0.1").replace(
+        "3.someuser", f"{user.id}.someuser"
+    )
+    log.write_text(local + "\n")
+    monkeypatch.setattr(job, "_access_log_path", lambda: str(log))
+
+    job._record_main_host(db)
+
+    assert (
+        db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).count() == 0
+    )
+
+
 def test_disappeared_sessions_are_removed_on_next_poll(db, tmp_path, monkeypatch):
     user = make_user(db, "mainhost2")
     log = tmp_path / "access.log"
