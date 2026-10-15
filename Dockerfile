@@ -12,8 +12,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY ./requirements.txt /code/
-RUN python3 -m pip install --upgrade pip setuptools \
-    && pip install --no-cache-dir --upgrade -r /code/requirements.txt
+RUN python3 -m pip install --upgrade pip "setuptools<81" \
+    && pip install --no-cache-dir --upgrade -r /code/requirements.txt \
+    && python3 -c "from pkg_resources import get_distribution, DistributionNotFound; get_distribution('APScheduler')"
 
 FROM python:$PYTHON_VERSION-slim
 
