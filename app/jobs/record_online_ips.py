@@ -119,7 +119,10 @@ def _follow_once(path: str) -> None:
                 if not line.endswith("\n"):
                     break  # partial write; the next pass re-reads it
                 if _register_sighting(line, time.time()):
+                    # A fresh breach: bail out and block NOW. The pipeline's
+                    # own reader covers whatever the tail hasn't seen yet.
                     new_sightings = True
+                    break
                 continue
             # EOF: copytruncate shrinks the file, rotation replaces it
             try:
