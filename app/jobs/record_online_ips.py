@@ -4,7 +4,7 @@ import re
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app import logger, scheduler, xray
 from app.db import GetDB, crud
@@ -430,10 +430,10 @@ def record_online_ips() -> None:
 
 
 # Fire once immediately so the follower starts and the firewall reconciles
-# right after boot instead of one interval later. misfire_grace_time=None:
-# the import-time next_run_time is always stale by scheduler.start().
+# right after boot instead of one interval later. The scheduler runs in UTC, so
+# the naive local now() could land hours in its future — pass aware UTC.
 scheduler.add_job(record_online_ips, 'interval',
                   seconds=JOB_RECORD_ONLINE_IPS_INTERVAL,
-                  next_run_time=datetime.now(),
+                  next_run_time=datetime.now(timezone.utc),
                   misfire_grace_time=None,
                   coalesce=True, max_instances=1)
