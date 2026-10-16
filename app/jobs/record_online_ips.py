@@ -61,7 +61,12 @@ def _log_line_ts(line: str) -> float:
 
 
 def _register_sighting(line: str, now: float) -> bool:
-    """Records one access-log line; True when the (user, ip) pair is new."""
+    """Records one access-log line; True when the (user, ip) pair is new.
+
+    Each sighting carries two times: the log line's own timestamp (anchors
+    first_seen — replaying history at boot must not make old addresses look
+    freshly arrived) and the wall clock (drives the freshness eviction).
+    """
     if "accepted" not in line:
         return False
     match = _ACCESS_LINE_RE.search(line)
@@ -80,12 +85,11 @@ def _register_sighting(line: str, now: float) -> bool:
         return False
 
     key = (user_id, ip)
-    if key in _main_sightings:
-        _main_sightings[key] = max(now, _main_sightings[key])
+    entry = _main_sightings.get(key)
+    if entry:
+        entry[1] = now  # liveness only moves forward
         return False
-    # The log's own timestamp anchors first_seen: replaying history at boot
-    # must not make old addresses look freshly arrived.
-    _main_sightings[key] = _log_line_ts(line)
+    _main_sightings[key] = [_log_line_ts(line), now]
     return True
 
 
@@ -363,7 +367,7 @@ _ACCESS_LINE_RE = re.compile(
     r"accepted\s+.*?email:\s*(?P<email>\S+)"
 )
 
-_main_sightings: dict[tuple[int, str], float] = {}
+_main_sightings: dict[tuple[int, str], list] = {}  # (user, ip) -> [first_ts, last_ts]
 _access_log_state: dict = {"path": None, "inode": None, "offset": 0}
 _access_log_warned = False
 
@@ -439,17 +443,18 @@ def _record_main_host(db) -> None:
 
     # A long-lived connection does not re-log its acceptance, so the sighting
     # window is what keeps last_seen fresh while the connection is in use.
-    for key, seen_at in list(_main_sightings.items()):
-        if now - seen_at > ONLINE_IP_STALE_INTERVAL:
+    for key, entry in list(_main_sightings.items()):
+        if now - entry[1] > ONLINE_IP_STALE_INTERVAL:
             del _main_sightings[key]
 
     reported: dict[str, list] = {}
-    for (user_id, ip), seen_at in _main_sightings.items():
+    for (user_id, ip), (first_seen, last_seen) in _main_sightings.items():
         # The access log carries no device fingerprint, so each address
-        # counts as its own device. seen_at rides along: it anchors
-        # first_seen at the address's real arrival, not at boot time.
+        # counts as its own device. The two timestamps ride along: seen_at
+        # anchors first_seen at the address's real arrival, not at boot time.
         reported.setdefault(str(user_id), []).append(
-            {"ip": ip, "device": ip, "device_name": "", "seen_at": seen_at}
+            {"ip": ip, "device": ip, "device_name": "",
+             "seen_at": first_seen, "last_seen": last_seen}
         )
     # Upsert, never snapshot: rows keep their first_seen (the enforcement
     # allowance anchor) across idle gaps and are swept on their own window.

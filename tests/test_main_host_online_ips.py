@@ -119,7 +119,10 @@ def test_register_sighting_dedupes_and_skips_junk():
     assert job._register_sighting("garbage line", now) is False     # unparseable
     loop = LINE_WITH_FROM.replace("198.51.100.7", "127.0.0.1")
     assert job._register_sighting(loop, now) is False               # loopback
-    assert job._main_sightings == {(3, "198.51.100.7"): now}
+    first, last = job._main_sightings[(3, "198.51.100.7")]
+    assert abs(first - job._log_line_ts(LINE_WITH_FROM)) < 1        # log anchor
+    assert abs(last - now) < 1                                      # liveness
+    assert len(job._main_sightings) == 1
 
 
 def test_follower_thread_starts_exactly_once():
@@ -189,7 +192,7 @@ def test_upsert_keeps_first_seen_across_idle_gaps(db, tmp_path, monkeypatch):
     log.write_text("")  # xray owns this file; the recorder only reads it
     monkeypatch.setattr(job, "_access_log_path", lambda: str(log))
 
-    job._main_sightings[(user.id, "198.51.100.7")] = time.time()
+    job._main_sightings[(user.id, "198.51.100.7")] = [time.time(), time.time()]
     job._record_main_host(db)
 
     row = db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).one()
@@ -197,7 +200,7 @@ def test_upsert_keeps_first_seen_across_idle_gaps(db, tmp_path, monkeypatch):
     row.first_seen_at = anchored
     db.commit()
 
-    job._main_sightings[(user.id, "198.51.100.7")] = time.time()
+    job._main_sightings[(user.id, "198.51.100.7")] = [time.time(), time.time()]
     job._record_main_host(db)
 
     row = db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).one()
