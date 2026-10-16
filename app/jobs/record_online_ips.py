@@ -475,6 +475,7 @@ def record_online_ips() -> None:
     # The follower thread triggers this same pipeline on fresh breaches; both
     # entry points serialize here so the firewall is touched by one at a time.
     with _pipeline_lock:
+        logger.info("online-ips pipeline pass")
         with GetDB() as db:
             for node_id, node in list(xray.nodes.items()):
                 if not (node.connected and node.started):

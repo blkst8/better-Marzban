@@ -57,7 +57,12 @@ def on_startup():
         raise ValueError(
             f"you can't use /{XRAY_SUBSCRIPTION_PATH}/ as subscription path it reserved for {app.title}"
         )
+    logger.info(f"STARTUP: starting scheduler with {len(scheduler.get_jobs())} jobs")
     scheduler.start()
+    logger.info(
+        f"STARTUP: scheduler state={scheduler.state}, "
+        f"next runs: {[(j.id[:6], str(j.next_run_time)) for j in scheduler.get_jobs()]}"
+    )
 
 
 @app.on_event("shutdown")
