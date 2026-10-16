@@ -228,7 +228,7 @@ def report_ip_limit_breach(username: str, limit: int, ips: list, admin: Admin = 
         '<b>IP Limit</b> : <code>%d</code>\n'
         '<b>Online IPs</b> : <code>%d</code>\n'
         '➖➖➖➖➖➖➖➖➖\n'
-        'Excess sessions are dropped on nodes; the main host is monitor-only.\n'
+        'Excess addresses are blocked by the panel firewall.\n'
         '<b>Belongs To</b> : <code>%s</code>\n'
     ) % (
         escape_html(username),

@@ -26,9 +26,9 @@ RUN python3 -m pip install --upgrade pip "setuptools<81" \
 
 FROM python:$PYTHON_VERSION-slim
 
-# iproute2 (ss): the ip-limit backstop kills excess addresses' sessions.
+# iproute2/iptables: the ip-limit backstop firewalls excess addresses.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iproute2 \
+    && apt-get install -y --no-install-recommends iptables \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHON_LIB_PATH=/usr/local/lib/python${PYTHON_VERSION%.*}/site-packages

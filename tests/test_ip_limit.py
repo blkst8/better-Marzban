@@ -367,33 +367,51 @@ def test_enforcement_skips_sessions_on_a_missing_node(db, monkeypatch):
     record_online_ips.enforce_ip_limits()  # must not raise
 
 
-def test_enforcement_kicks_main_host_sessions_by_ip(db, monkeypatch):
-    """node_id=None rows have no node channel; the excess address is dropped."""
+def test_enforcement_blocks_main_host_excess_addresses(db, monkeypatch):
+    """node_id=None rows have no node channel; excess IPs get firewalled."""
     dbuser = make_user(db, "ipuser35", ip_limit=1)
     report(db, None, {dbuser.id: sessions(
         ("10.0.0.1", "a"), ("10.0.0.2", "b"),
     )})
 
-    kicked = []
-    monkeypatch.setattr(record_online_ips, "_kick_main_host_ip",
-                        lambda ip, ports: kicked.append(ip) or 1)
+    calls = []
+    monkeypatch.setattr(record_online_ips, "_iptables",
+                        lambda args: calls.append(args) or "")
+    monkeypatch.setattr(record_online_ips, "_chain_ready", True)
     monkeypatch.setattr(record_online_ips.xray, "nodes", {})
     record_online_ips.enforce_ip_limits()
 
-    # Newest address is dropped, the longest-lived one survives.
-    assert kicked == ["10.0.0.2"]
+    adds = [args for args in calls if args[:2] == ["-A", record_online_ips._IPTABLES_CHAIN]]
+    assert any("10.0.0.2" in args for args in adds), calls
+    assert not any("10.0.0.1" in args for args in adds), calls
 
 
-def test_enforcement_survives_a_failing_main_host_kick(db, monkeypatch):
+def test_enforcement_releases_blocks_after_recovery(db, monkeypatch):
+    """A user back under the limit gets their addresses unblocked."""
+    dbuser = make_user(db, "ipuser37", ip_limit=1)
+
+    calls = []
+    monkeypatch.setattr(record_online_ips, "_iptables",
+                        lambda args: calls.append(args) or "")
+    monkeypatch.setattr(record_online_ips, "_chain_ready", True)
+    monkeypatch.setattr(record_online_ips.xray, "nodes", {})
+
+    record_online_ips._blocked_ips.update({"10.0.0.2": dbuser.username})
+    record_online_ips.enforce_ip_limits()  # no breach now: reconcile must clear
+
+    assert record_online_ips._blocked_ips == {}
+
+
+def test_enforcement_survives_a_failing_firewall(db, monkeypatch):
     dbuser = make_user(db, "ipuser36", ip_limit=1)
     report(db, None, {dbuser.id: sessions(
         ("10.0.0.1", "a"), ("10.0.0.2", "b"),
     )})
 
-    def broken_kick(ip, ports):
-        raise RuntimeError("ss is not available")
+    def broken_iptables(args):
+        raise RuntimeError("iptables is not available")
 
-    monkeypatch.setattr(record_online_ips, "_kick_main_host_ip", broken_kick)
+    monkeypatch.setattr(record_online_ips, "_iptables", broken_iptables)
     monkeypatch.setattr(record_online_ips.xray, "nodes", {})
     record_online_ips.enforce_ip_limits()  # must not raise
 

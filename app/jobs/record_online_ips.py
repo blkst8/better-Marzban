@@ -20,8 +20,8 @@ from config import (
 reported_breaches = {}
 
 
-def _xray_tcp_ports() -> list:
-    """The TCP ports of the main host's managed xray inbounds."""
+def _xray_ports() -> list:
+    """The ports of the main host's managed xray inbounds."""
     ports = []
     for inbound in xray.config.get("inbounds", []):
         if inbound.get("tag") in XRAY_EXCLUDE_INBOUND_TAGS:
@@ -32,47 +32,94 @@ def _xray_tcp_ports() -> list:
     return sorted(set(ports))
 
 
-def _kick_main_host_ip(ip: str, ports: list) -> int:
-    """
-    Drops one client address's established sessions on the main host.
+_IPTABLES_CHAIN = "MARZBAN_IPLIMIT"
+_chain_ready = False
+_blocked_ips: dict[str, str] = {}
 
-    xray has no connect-time hook here, so the backstop kills the address's
-    live TCP sessions with ss(8); the device may reconnect and gets dropped
-    again on the next poll. UDP-based inbounds (mKCP) cannot be touched this
-    way and stay monitor-only.
 
-    Returns the number of killed sockets. Raises when ss is missing or
-    refuses (missing NET_ADMIN), so the caller can degrade to monitor-only.
+def _iptables(args: list) -> str:
+    result = subprocess.run(
+        ["iptables", *args], capture_output=True, text=True, timeout=15
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"iptables {' '.join(args)}: {result.stderr.strip()}")
+    return result.stdout
+
+
+def _ensure_chain() -> None:
+    """Creates the chain once per process and clears leftover rules."""
+    global _chain_ready
+    if _chain_ready:
+        return
+    try:
+        try:
+            _iptables(["-N", _IPTABLES_CHAIN])
+        except RuntimeError:
+            pass  # chain already exists
+        # The jump from INPUT is idempotent: -C succeeds when already present.
+        if subprocess.run(
+            ["iptables", "-C", "INPUT", "-j", _IPTABLES_CHAIN],
+            capture_output=True, timeout=15,
+        ).returncode != 0:
+            _iptables(["-I", "INPUT", "1", "-j", _IPTABLES_CHAIN])
+        # A previous run's blocks must not outlive this process' state.
+        _iptables(["-F", _IPTABLES_CHAIN])
+        _blocked_ips.clear()
+        _chain_ready = True
+    except Exception:
+        logger.exception("Failed to prepare the ip-limit firewall chain")
+        return
+    logger.info(
+        f"ip-limit firewall chain {_IPTABLES_CHAIN} ready; "
+        f"enforcing on ports {_xray_ports()}"
+    )
+
+
+def _reconcile_blocked_ips(desired: dict[str, str]) -> None:
     """
-    killed = 0
-    for port in ports:
-        result = subprocess.run(
-            ["ss", "--kill", "state", "established",
-             "sport", "=", f":{port}", "dst", ip],
-            capture_output=True, text=True, timeout=15,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"ss --kill failed on port {port}: {result.stderr.strip()}"
-            )
-        killed += sum(1 for line in result.stdout.splitlines() if "ESTAB" in line)
-    return killed
+    Makes the firewall match the current breach set exactly.
+
+    desired: {ip: username} — every excess main-host address. Rules are
+    rebuilt only when the set changes, so a steady breach costs nothing.
+    """
+    if desired == _blocked_ips:
+        return
+
+    try:
+        _iptables(["-F", _IPTABLES_CHAIN])
+        for ip, username in desired.items():
+            try:
+                _iptables([
+                    "-A", _IPTABLES_CHAIN, "-s", ip,
+                    "-m", "multiport", "--dports", ",".join(map(str, _xray_ports())),
+                    "-j", "DROP",
+                ])
+                logger.info(f"Blocked {ip} (over ip limit, user \"{username}\")")
+            except Exception:
+                logger.exception(f"Failed to block {ip} of user \"{username}\"")
+        _blocked_ips.clear()
+        _blocked_ips.update(desired)
+    except Exception:
+        logger.exception("Reconciling the ip-limit firewall failed; "
+                         "continuing monitor-only")
 
 
 def enforce_ip_limits() -> None:
     """
-    Disconnects the excess sessions of any user over their limit.
+    Firewalls the excess addresses of any user over their limit.
 
     The limit counts distinct public IPs: every device behind one NAT address
     shares that address's single allowance. Nodes are expected to enforce the
-    limit themselves at connect time; this is the backstop for nodes that
-    report sessions but do not block. Within one address, the most recently
-    seen sessions are dropped first, so the longest-lived sessions survive.
+    limit themselves at connect time; on the main host the panel drops the
+    excess addresses into a firewall chain, so the newest addresses are the
+    ones blocked and the longest-lived ones keep working.
     """
     with GetDB() as db:
         users = db.query(User).filter(
             User.ip_limit.isnot(None), User.ip_limit > 0
         ).all()
+
+        _ensure_chain()
 
         # Users that dropped back under their limit stop being reported, so the
         # next breach is announced again.
@@ -80,7 +127,7 @@ def enforce_ip_limits() -> None:
             if username not in {u.username for u in users}:
                 del reported_breaches[username]
 
-        main_host_ports = _xray_tcp_ports()
+        desired_blocks: dict[str, str] = {}
 
         for user in users:
             records = crud.get_user_online_ips(db, user)
@@ -109,26 +156,14 @@ def enforce_ip_limits() -> None:
                         f"Failed to kick online ip {record.ip} of user \"{user.username}\""
                     )
 
-            # Main-host sessions have no node to kick through; drop the excess
-            # address's live connections directly.
-            for ip in sorted({r.ip for r in excess if r.node_id is None}):
-                try:
-                    dropped = _kick_main_host_ip(ip, main_host_ports)
-                except Exception:
-                    logger.exception(
-                        f"Failed to kick main-host sessions of {ip} "
-                        f"of user \"{user.username}\""
-                    )
-                    continue
-                if dropped:
-                    logger.info(
-                        f"Kicked {dropped} live session(s) of {ip} "
-                        f"of user \"{user.username}\" on the main host"
-                    )
+            # Main-host rows have no node channel; the excess addresses are
+            # firewalled off instead.
+            for ip in {r.ip for r in excess if r.node_id is None}:
+                desired_blocks[ip] = user.username
 
             logger.info(
                 f"User \"{user.username}\" is online from {len(ips)} IPs "
-                f"but is limited to {user.ip_limit}; kicked {len(excess)} sessions"
+                f"but is limited to {user.ip_limit}; blocking {len(desired_blocks)} excess"
             )
 
             # Reporting the same episode on every poll would spam the admins, so
@@ -142,6 +177,9 @@ def enforce_ip_limits() -> None:
                     ips=ips,
                     admin=user.admin,
                 )
+
+        # Users that fell back under their limit must also release their block.
+        _reconcile_blocked_ips(desired_blocks)
 
 
 # Main-host recording ---------------------------------------------------------

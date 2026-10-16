@@ -4,8 +4,8 @@ services:
     restart: always
     env_file: .env
     network_mode: host
-    # NET_ADMIN: the ip-limit backstop kills excess addresses' established
-    # sessions with `ss --kill`; without it the main host is monitor-only.
+    # NET_ADMIN: the ip-limit backstop firewalls excess addresses (iptables
+    # MARZBAN_IPLIMIT chain); without it the main host is monitor-only.
     cap_add:
       - NET_ADMIN
     volumes:
