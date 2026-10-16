@@ -4,6 +4,7 @@ import re
 import subprocess
 import threading
 import time
+from datetime import datetime
 
 from app import logger, scheduler, xray
 from app.db import GetDB, crud
@@ -428,6 +429,9 @@ def record_online_ips() -> None:
             enforce_ip_limits()
 
 
+# Fire once immediately so the follower starts and the firewall reconciles
+# right after boot instead of one interval later.
 scheduler.add_job(record_online_ips, 'interval',
                   seconds=JOB_RECORD_ONLINE_IPS_INTERVAL,
+                  next_run_time=datetime.now(),
                   coalesce=True, max_instances=1)
