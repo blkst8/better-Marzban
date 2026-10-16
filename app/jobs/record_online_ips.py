@@ -20,16 +20,18 @@ from config import (
 reported_breaches = {}
 
 
-def _xray_ports() -> list:
-    """The ports of the main host's managed xray inbounds."""
-    ports = []
+def _inbound_ports_by_proto() -> tuple[list, list]:
+    """(tcp, udp) port lists of the main host's managed xray inbounds."""
+    tcp_ports, udp_ports = set(), set()
     for inbound in xray.config.get("inbounds", []):
         if inbound.get("tag") in XRAY_EXCLUDE_INBOUND_TAGS:
             continue
         port = inbound.get("port")
-        if isinstance(port, int):
-            ports.append(port)
-    return sorted(set(ports))
+        if not isinstance(port, int):
+            continue
+        network = inbound.get("streamSettings", {}).get("network", "tcp")
+        (udp_ports if network in ("mkcp", "quic") else tcp_ports).add(port)
+    return sorted(tcp_ports), sorted(udp_ports)
 
 
 _IPTABLES_CHAIN = "MARZBAN_IPLIMIT"
@@ -69,9 +71,10 @@ def _ensure_chain() -> None:
     except Exception:
         logger.exception("Failed to prepare the ip-limit firewall chain")
         return
+    tcp_ports, udp_ports = _inbound_ports_by_proto()
     logger.info(
         f"ip-limit firewall chain {_IPTABLES_CHAIN} ready; "
-        f"enforcing on ports {_xray_ports()}"
+        f"enforcing tcp:{tcp_ports} udp:{udp_ports}"
     )
 
 
@@ -86,14 +89,22 @@ def _reconcile_blocked_ips(desired: dict[str, str]) -> None:
         return
 
     try:
+        tcp_ports, udp_ports = _inbound_ports_by_proto()
         _iptables(["-F", _IPTABLES_CHAIN])
         for ip, username in desired.items():
             try:
-                _iptables([
-                    "-A", _IPTABLES_CHAIN, "-s", ip,
-                    "-m", "multiport", "--dports", ",".join(map(str, _xray_ports())),
-                    "-j", "DROP",
-                ])
+                if tcp_ports:
+                    _iptables([
+                        "-A", _IPTABLES_CHAIN, "-s", ip, "-p", "tcp",
+                        "-m", "multiport", "--dports", ",".join(map(str, tcp_ports)),
+                        "-j", "DROP",
+                    ])
+                if udp_ports:
+                    _iptables([
+                        "-A", _IPTABLES_CHAIN, "-s", ip, "-p", "udp",
+                        "-m", "multiport", "--dports", ",".join(map(str, udp_ports)),
+                        "-j", "DROP",
+                    ])
                 logger.info(f"Blocked {ip} (over ip limit, user \"{username}\")")
             except Exception:
                 logger.exception(f"Failed to block {ip} of user \"{username}\"")
