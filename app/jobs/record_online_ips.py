@@ -26,11 +26,13 @@ def _inbound_ports_by_proto() -> tuple[list, list]:
     for inbound in xray.config.get("inbounds", []):
         if inbound.get("tag") in XRAY_EXCLUDE_INBOUND_TAGS:
             continue
+        if inbound.get("protocol") == "dokodemo-door":
+            continue  # the local API inbound, nothing external connects there
         port = inbound.get("port")
         if not isinstance(port, int):
             continue
         network = inbound.get("streamSettings", {}).get("network", "tcp")
-        (udp_ports if network in ("mkcp", "quic") else tcp_ports).add(port)
+        (udp_ports if network in ("kcp", "quic") else tcp_ports).add(port)
     return sorted(tcp_ports), sorted(udp_ports)
 
 
