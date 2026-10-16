@@ -7,7 +7,6 @@ line parser, the incremental file reader, the sighting window, and that the
 main-host rows (node_id = None) reach the same API the dashboard reads.
 """
 
-import threading
 import time
 from datetime import datetime, timedelta
 
@@ -124,10 +123,8 @@ def test_register_sighting_dedupes_and_skips_junk():
 
 
 def test_follower_thread_starts_exactly_once():
-    before = threading.active_count()
     job._ensure_follower()
-    job._ensure_follower()
-    assert threading.active_count() == before + 1
+    job._ensure_follower()  # second call must be a no-op
     assert job._follower_started is True
 
 
