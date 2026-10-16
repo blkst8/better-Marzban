@@ -81,35 +81,42 @@ def _register_sighting(line: str, now: float) -> bool:
 def _follow_loop() -> None:
     """Tails the access log and re-runs the pipeline on new sightings."""
     while True:
-        path = _access_log_path()
-        if not path:
-            return  # access log disabled: the periodic job covers nothing more
         try:
-            new_sightings = False
-            with open(path, errors="replace") as f:
-                f.seek(0, os.SEEK_END)  # the periodic job covers history
-                ino = os.fstat(f.fileno()).st_ino
-                while True:
-                    line = f.readline()
-                    if line:
-                        if not line.endswith("\n"):
-                            break  # partial write; the next pass re-reads it
-                        if _register_sighting(line, time.time()):
-                            new_sightings = True
-                        continue
-                    # EOF: copytruncate shrinks the file, rotation replaces it
-                    try:
-                        stat = os.stat(path)
-                        if stat.st_ino == ino and stat.st_size >= f.tell():
-                            time.sleep(0.3)
-                            continue
-                    except OSError:
-                        pass
-                    break
-            if new_sightings:
-                _trigger_pipeline()
-        except OSError:
+            path = _access_log_path()
+            if not path:
+                return  # access log disabled: the periodic job covers it
+            _follow_once(path)
+        except Exception:
+            # A dead follower would silently degrade blocking to the 30 s
+            # poll; make any such death loud.
+            logger.exception("access-log follower crashed; restarting in 5s")
             time.sleep(5)
+
+
+def _follow_once(path: str) -> None:
+    new_sightings = False
+    with open(path, errors="replace") as f:
+        f.seek(0, os.SEEK_END)  # the periodic job covers history
+        ino = os.fstat(f.fileno()).st_ino
+        while True:
+            line = f.readline()
+            if line:
+                if not line.endswith("\n"):
+                    break  # partial write; the next pass re-reads it
+                if _register_sighting(line, time.time()):
+                    new_sightings = True
+                continue
+            # EOF: copytruncate shrinks the file, rotation replaces it
+            try:
+                stat = os.stat(path)
+                if stat.st_ino == ino and stat.st_size >= f.tell():
+                    time.sleep(0.3)
+                    continue
+            except OSError:
+                pass
+            break
+    if new_sightings:
+        _trigger_pipeline()
 
 
 def _trigger_pipeline() -> None:
