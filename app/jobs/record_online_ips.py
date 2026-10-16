@@ -99,7 +99,9 @@ def _follow_loop() -> None:
         try:
             path = _access_log_path()
             if not path:
+                logger.info("access-log follower: no access log configured, exiting")
                 return  # access log disabled: the periodic job covers it
+            logger.info(f"access-log follower tailing {path}")
             _follow_once(path)
         except Exception:
             # A dead follower would silently degrade blocking to the 30 s
