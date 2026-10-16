@@ -7,6 +7,9 @@ line parser, the incremental file reader, the sighting window, and that the
 main-host rows (node_id = None) reach the same API the dashboard reads.
 """
 
+import time
+from datetime import datetime, timedelta
+
 import pytest
 
 from app.db import crud
@@ -140,7 +143,7 @@ def test_loopback_traffic_is_not_recorded(db, tmp_path, monkeypatch):
     )
 
 
-def test_disappeared_sessions_are_removed_on_next_poll(db, tmp_path, monkeypatch):
+def test_main_rows_survive_idle_polls_and_sweep_later(db, tmp_path, monkeypatch):
     user = make_user(db, "mainhost2")
     log = tmp_path / "access.log"
     log.write_text(LINE_WITH_FROM.replace("3.someuser", f"{user.id}.someuser") + "\n")
@@ -149,10 +152,78 @@ def test_disappeared_sessions_are_removed_on_next_poll(db, tmp_path, monkeypatch
     job._record_main_host(db)
     assert db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).count() == 1
 
-    # No new connections and an expired window: the snapshot must empty out.
+    # The device goes silent: no new sightings. An idle connection leaves no
+    # log trace, so the row must NOT vanish with the poll.
     job._main_sightings.clear()
     job._record_main_host(db)
+    rows = db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).all()
+    assert len(rows) == 1
+
+    # After the main window (default 1h) the sweep takes it.
+    rows[0].last_seen_at = datetime.utcnow() - timedelta(hours=2)
+    db.commit()
+    assert crud.delete_stale_online_ips(db, 90, main_max_age_seconds=3600) == 1
     assert db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).count() == 0
+
+
+def test_upsert_keeps_first_seen_across_idle_gaps(db, tmp_path, monkeypatch):
+    """first_seen anchors the enforcement allowance; it must never reset."""
+    user = make_user(db, "mainhost5")
+    log = tmp_path / "access.log"
+    monkeypatch.setattr(job, "_access_log_path", lambda: str(log))
+
+    job._main_sightings[(user.id, "198.51.100.7")] = time.time()
+    job._record_main_host(db)
+
+    row = db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).one()
+    anchored = datetime.utcnow() - timedelta(hours=5)
+    row.first_seen_at = anchored
+    db.commit()
+
+    job._main_sightings[(user.id, "198.51.100.7")] = time.time()
+    job._record_main_host(db)
+
+    row = db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).one()
+    assert abs((row.first_seen_at - anchored).total_seconds()) < 1  # never reset
+    assert row.last_seen_at > anchored    # but liveness moves forward
+
+
+def test_node_rows_sweep_fast_main_rows_slow(db):
+    user = make_user(db, "mainhost6")
+    crud.sync_node_online_ips(db, 1, {user.id: [
+        {"ip": "10.0.0.1", "device": "n", "device_name": ""}]})
+    crud.upsert_main_online_ips(db, {user.id: [
+        {"ip": "10.0.0.9", "device": "m", "device_name": ""}]})
+
+    old = datetime.utcnow() - timedelta(minutes=5)
+    db.query(UserOnlineIp).filter(UserOnlineIp.node_id.isnot(None)) \
+        .update({"last_seen_at": old})
+    db.query(UserOnlineIp).filter(UserOnlineIp.node_id.is_(None)) \
+        .update({"last_seen_at": old})
+    db.commit()
+
+    assert crud.delete_stale_online_ips(db, 90, main_max_age_seconds=3600) == 1
+    left = {r.ip: r.node_id for r in crud.get_user_online_ips(db, user)}
+    assert left == {"10.0.0.9": None}
+
+
+def test_disappeared_sessions_are_removed_on_next_poll(db, tmp_path, monkeypatch):
+    """The ROW lingers through idle polls, but its first_seen must not reset."""
+    user = make_user(db, "mainhost2")
+    log = tmp_path / "access.log"
+    log.write_text(LINE_WITH_FROM.replace("3.someuser", f"{user.id}.someuser") + "\n")
+    monkeypatch.setattr(job, "_access_log_path", lambda: str(log))
+
+    job._record_main_host(db)
+    row = db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).one()
+    original_first_seen = row.first_seen_at
+
+    # Device silent for a poll: the row survives with its anchor intact.
+    job._main_sightings.clear()
+    job._record_main_host(db)
+
+    row = db.query(UserOnlineIp).filter(UserOnlineIp.user_id == user.id).one()
+    assert row.first_seen_at == original_first_seen
 
 
 def test_missing_access_log_only_warns(db, monkeypatch):

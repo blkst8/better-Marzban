@@ -1615,23 +1615,82 @@ def sync_node_online_ips(db: Session, node_id: Union[int, None], reported: dict)
     return len(reported)
 
 
-def delete_stale_online_ips(db: Session, max_age_seconds: int) -> int:
+def upsert_main_online_ips(db: Session, reported: dict) -> None:
     """
-    Deletes sessions that no poll has refreshed recently.
+    Records main-host sightings without the node snapshot semantics.
 
-    The per-poll snapshot already removes disconnected sessions, but a node that
-    goes unreachable never reports again, so its rows would linger forever.
+    A main-host session is derived from the access log: while a connection
+    merely idles it produces no new lines, so a missing sighting must not
+    delete the row. first_seen marks the first time an address was seen and
+    anchors the enforcement allowance; last_seen marks the latest.
 
     Args:
         db (Session): Database session.
-        max_age_seconds (int): Age after which a session is considered stale.
+        reported (dict): {user_id: [{ip, device, device_name}, ...]}
+    """
+    now = datetime.utcnow()
+    live_ids = {row[0] for row in db.query(User.id).all()}
+
+    for user_id, sessions in reported.items():
+        uid = int(user_id)
+        if uid not in live_ids:
+            continue
+        for session in sessions:
+            row = db.query(UserOnlineIp).filter(
+                UserOnlineIp.user_id == uid,
+                UserOnlineIp.ip == session["ip"],
+                UserOnlineIp.node_id.is_(None),
+            ).first()
+            if row is None:
+                db.add(UserOnlineIp(
+                    user_id=uid,
+                    node_id=None,
+                    ip=session["ip"],
+                    device=session["device"],
+                    device_name=session["device_name"],
+                    first_seen_at=now,
+                    last_seen_at=now,
+                ))
+            else:
+                row.last_seen_at = now
+                if session.get("device_name"):
+                    row.device_name = session["device_name"]
+
+    db.commit()
+
+
+def delete_stale_online_ips(
+    db: Session, max_age_seconds: int, main_max_age_seconds: int = None
+) -> int:
+    """
+    Deletes sessions that no poll has refreshed recently.
+
+    The per-poll snapshot already removes disconnected node sessions, but a
+    node that goes unreachable never reports again, so its rows would linger
+    forever. Main-host rows (node_id=None) may idle much longer — an access-log
+    session leaves no trace while its connection idles — so they get their own
+    staleness window and keep a stable first_seen across idle gaps.
+
+    Args:
+        db (Session): Database session.
+        max_age_seconds (int): Age after which a node session is stale.
+        main_max_age_seconds (int): Age after which a main-host session is
+            stale; None falls back to max_age_seconds.
 
     Returns:
         int: Number of deleted rows.
     """
-    cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
-    stale = db.query(UserOnlineIp) \
-        .filter(UserOnlineIp.last_seen_at < cutoff).all()
+    now = datetime.utcnow()
+    stale = db.query(UserOnlineIp).filter(
+        UserOnlineIp.last_seen_at < now - timedelta(seconds=max_age_seconds),
+        UserOnlineIp.node_id.isnot(None),
+    ).all()
+
+    main_cutoff = now - timedelta(seconds=main_max_age_seconds or max_age_seconds)
+    stale += db.query(UserOnlineIp).filter(
+        UserOnlineIp.last_seen_at < main_cutoff,
+        UserOnlineIp.node_id.is_(None),
+    ).all()
 
     for row in stale:
         db.delete(row)

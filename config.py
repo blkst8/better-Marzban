@@ -159,4 +159,11 @@ JOB_SEND_NOTIFICATIONS_INTERVAL = config("JOB_SEND_NOTIFICATIONS_INTERVAL", cast
 ONLINE_IP_STALE_INTERVAL = config(
     "ONLINE_IP_STALE_INTERVAL", cast=int, default=JOB_RECORD_ONLINE_IPS_INTERVAL * 3
 )
+
+# Main-host sessions come from the access log: an idle but alive long-lived
+# connection leaves no trace, so they get a longer window before the sweep.
+# A stable first_seen is what keeps the enforcement allowance from flipping.
+ONLINE_IP_MAIN_STALE_INTERVAL = config(
+    "ONLINE_IP_MAIN_STALE_INTERVAL", cast=int, default=3600
+)
 JOB_SEND_NOTIFICATIONS_INTERVAL = config("JOB_SEND_NOTIFICATIONS_INTERVAL", cast=int, default=30)

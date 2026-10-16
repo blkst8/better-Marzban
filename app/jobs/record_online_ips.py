@@ -12,6 +12,7 @@ from config import (
     DISABLE_RECORDING_ONLINE_IPS,
     ENFORCE_IP_LIMIT,
     JOB_RECORD_ONLINE_IPS_INTERVAL,
+    ONLINE_IP_MAIN_STALE_INTERVAL,
     ONLINE_IP_STALE_INTERVAL,
     XRAY_EXCLUDE_INBOUND_TAGS,
 )
@@ -300,7 +301,7 @@ def _record_main_host(db) -> None:
         _main_sightings[(user_id, ip)] = now
 
     # A long-lived connection does not re-log its acceptance, so the sighting
-    # window is what turns the append-only log into a "live" snapshot.
+    # window is what keeps last_seen fresh while the connection is in use.
     for key, seen_at in list(_main_sightings.items()):
         if now - seen_at > ONLINE_IP_STALE_INTERVAL:
             del _main_sightings[key]
@@ -312,7 +313,9 @@ def _record_main_host(db) -> None:
         reported.setdefault(str(user_id), []).append(
             {"ip": ip, "device": ip, "device_name": ""}
         )
-    crud.sync_node_online_ips(db, None, reported)
+    # Upsert, never snapshot: rows keep their first_seen (the enforcement
+    # allowance anchor) across idle gaps and are swept on their own window.
+    crud.upsert_main_online_ips(db, reported)
 
 
 def record_online_ips() -> None:
@@ -335,8 +338,12 @@ def record_online_ips() -> None:
         _record_main_host(db)
 
         # A node that goes unreachable never reports again, so its sessions
-        # would otherwise stay listed forever.
-        stale = crud.delete_stale_online_ips(db, ONLINE_IP_STALE_INTERVAL)
+        # would otherwise stay listed forever. Main-host rows idle longer by
+        # design and sweep on their own window.
+        stale = crud.delete_stale_online_ips(
+            db, ONLINE_IP_STALE_INTERVAL,
+            main_max_age_seconds=ONLINE_IP_MAIN_STALE_INTERVAL,
+        )
         if stale:
             logger.info(f"Removed {stale} online session(s) that went stale")
 
