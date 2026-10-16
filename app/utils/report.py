@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime as dt
 from typing import Optional
 
@@ -227,19 +228,26 @@ def ip_limit_breach(username: str, limit: int, ips: list, admin: Admin = None) -
     """
     Notifies every channel that a user exceeded its IP limit.
 
+    Fire-and-forget: this runs inside the enforcement pass, and a hung
+    Telegram send (api.telegram.org is intermittently unreachable from the
+    VPS) would otherwise freeze the firewall reconcile that follows it.
+
     Args:
         username (str): The user's username.
         limit (int): Configured IP limit for that user.
         ips (list): Public IPs the user is currently online from.
         admin (Admin, optional): The admin the user belongs to.
     """
-    try:
-        telegram.report_ip_limit_breach(
-            username=username,
-            limit=limit,
-            ips=ips,
-            admin=admin,
-        )
-    except Exception:
-        pass
+    def _send():
+        try:
+            telegram.report_ip_limit_breach(
+                username=username,
+                limit=limit,
+                ips=ips,
+                admin=admin,
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_send, daemon=True).start()
 

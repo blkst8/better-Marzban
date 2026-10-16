@@ -16,13 +16,15 @@ from app.models.user import UserDataLimitResetStrategy
 def report(text: str, chat_id: int = None, parse_mode="html", keyboard=None):
     if bot and (TELEGRAM_ADMIN_ID or TELEGRAM_LOGGER_CHANNEL_ID):
         try:
+            # timeout bounds every send: a black-holed api.telegram.org must
+            # cost this call seconds, not hang it for minutes.
             if TELEGRAM_LOGGER_CHANNEL_ID:
-                bot.send_message(TELEGRAM_LOGGER_CHANNEL_ID, text, parse_mode=parse_mode)
+                bot.send_message(TELEGRAM_LOGGER_CHANNEL_ID, text, parse_mode=parse_mode, timeout=10)
             else:
                 for admin in TELEGRAM_ADMIN_ID:
-                    bot.send_message(admin, text, parse_mode=parse_mode, reply_markup=keyboard)
+                    bot.send_message(admin, text, parse_mode=parse_mode, reply_markup=keyboard, timeout=10)
             if chat_id:
-                bot.send_message(chat_id, text, parse_mode=parse_mode)
+                bot.send_message(chat_id, text, parse_mode=parse_mode, timeout=10)
         except ApiTelegramException as e:
             logger.error(e)
 
