@@ -1711,6 +1711,41 @@ def delete_stale_online_ips(
     return len(stale)
 
 
+def reset_all_online_ips(db: Session) -> int:
+    """
+    Wipes every recorded online session: device counting restarts from zero
+    for all users. Firewall blocks release on the next enforcement pass.
+
+    Args:
+        db (Session): Database session.
+
+    Returns:
+        int: Number of deleted rows.
+    """
+    count = db.query(UserOnlineIp).delete()
+    db.commit()
+    return count
+
+
+def reset_user_online_ips(db: Session, dbuser: User) -> int:
+    """
+    Wipes one user's recorded online sessions: their device counting
+    restarts from zero and their firewall blocks release.
+
+    Args:
+        db (Session): Database session.
+        dbuser (User): The user object.
+
+    Returns:
+        int: Number of deleted rows.
+    """
+    count = db.query(UserOnlineIp).filter(
+        UserOnlineIp.user_id == dbuser.id
+    ).delete()
+    db.commit()
+    return count
+
+
 def remove_user_online_ip(db: Session, dbuser: User, ip: str, device: str) -> None:
     """
     Drops a single stored session for a user.

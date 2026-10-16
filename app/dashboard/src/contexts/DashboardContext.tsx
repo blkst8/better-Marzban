@@ -58,6 +58,7 @@ type DashboardStateType = {
   refetchUsers: () => void;
   refetchOnlineIps: () => void;
   resetAllUsage: () => Promise<void>;
+  resetOnlineIps: (username: string | null) => Promise<void>;
   onFilterChange: (filters: Partial<FilterType>) => void;
   deleteUser: (user: User) => Promise<void>;
   createUser: (user: UserCreate) => Promise<void>;
@@ -152,6 +153,14 @@ export const useDashboard = create(
       return fetch(`/users/reset`, { method: "POST" }).then(() => {
         get().onResetAllUsage(false);
         get().refetchUsers();
+      });
+    },
+    resetOnlineIps: (username) => {
+      const url = username
+        ? `/user/${username}/online-ips/reset`
+        : `/users/online-ips/reset`;
+      return fetch(url, { method: "POST" }).then(() => {
+        get().refetchOnlineIps();
       });
     },
     onResetAllUsage: (isResetingAllUsage) => set({ isResetingAllUsage }),

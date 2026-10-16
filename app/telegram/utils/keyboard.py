@@ -23,6 +23,8 @@ class BotKeyboard:
             types.InlineKeyboardButton(text='🔁 System Info', callback_data='system'),
             types.InlineKeyboardButton(text='♻️ Restart Xray', callback_data='restart'))
         keyboard.add(
+            types.InlineKeyboardButton(text='🔢 Reset Device Counting', callback_data='reset_all_ips'))
+        keyboard.add(
             types.InlineKeyboardButton(text='👥 Users', callback_data='users:1'),
             types.InlineKeyboardButton(text='✏️ Edit All Users', callback_data='edit_all'))
         keyboard.add(
@@ -263,8 +265,13 @@ class BotKeyboard:
         )
         keyboard.add(
             types.InlineKeyboardButton(
+                text="🔄 Restart counting", callback_data=f"reset_ips:{username}"
+            ),
+            types.InlineKeyboardButton(
                 text="♻️ Refresh", callback_data=f"devices:{username}"
             ),
+        )
+        keyboard.add(
             types.InlineKeyboardButton(
                 text="🔙 Back", callback_data=f"user:{username}"
             ),

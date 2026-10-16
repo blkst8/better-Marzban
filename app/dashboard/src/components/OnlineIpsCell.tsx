@@ -1,5 +1,5 @@
 import { Badge, Tooltip } from "@chakra-ui/react";
-import { FC } from "react";
+import { FC, MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useDashboard } from "contexts/DashboardContext";
 import { User } from "types/User";
@@ -16,6 +16,7 @@ export type OnlineIpsCellProps = {
 export const OnlineIpsCell: FC<OnlineIpsCellProps> = ({ user }) => {
   const { t } = useTranslation();
   const sessions = useDashboard((state) => state.onlineIps[user.username]);
+  const resetOnlineIps = useDashboard((state) => state.resetOnlineIps);
 
   if (!sessions || sessions.length === 0) {
     return <span>-</span>;
@@ -33,10 +34,16 @@ export const OnlineIpsCell: FC<OnlineIpsCellProps> = ({ user }) => {
     )
     .join("\n");
 
+  const onReset = (e: MouseEvent) => {
+    // The row opens the user modal; a reset click must stay a reset.
+    e.stopPropagation();
+    resetOnlineIps(user.username);
+  };
+
   return (
     <Tooltip
       hasArrow
-      label={label}
+      label={`${label}\n\nClick to restart counting`}
       textAlign="center"
       placement="top"
       background="#353645"
@@ -46,9 +53,11 @@ export const OnlineIpsCell: FC<OnlineIpsCellProps> = ({ user }) => {
       maxW={"300px"}
     >
       <Badge
+        as="button"
+        onClick={onReset}
         colorScheme={overLimit ? "red" : "green"}
         fontSize="11px"
-        cursor="default"
+        cursor="pointer"
       >
         {overLimit ? t("usersTable.overIpLimit") : `${ips.size}/${limit || "∞"}`}
       </Badge>

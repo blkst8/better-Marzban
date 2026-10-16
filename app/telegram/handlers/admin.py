@@ -620,6 +620,70 @@ def devices_command(call: types.CallbackQuery):
 
 
 
+@bot.callback_query_handler(cb_query_startswith('reset_ips:'), is_admin=True)
+def reset_ips_command(call: types.CallbackQuery):
+    username = call.data.split(':')[1]
+    with GetDB() as db:
+        db_user = crud.get_user(db, username)
+        if not db_user:
+            return bot.answer_callback_query(call.id, '❌ User not found.', show_alert=True)
+        deleted = crud.reset_user_online_ips(db, db_user)
+        ip_limit = db_user.ip_limit
+
+    try:
+        bot.edit_message_text(
+            f'🔄 Device counting restarted for <b>{username}</b>.\n'
+            f'🗑 {deleted} recorded session(s) cleared.',
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=BotKeyboard.user_devices_menu(username, [], device_limit=ip_limit))
+    except Exception:
+        pass
+    bot.answer_callback_query(call.id, '✅ Counting restarted')
+
+
+@bot.callback_query_handler(cb_query_equals('reset_all_ips'), is_admin=True)
+def reset_all_ips_command(call: types.CallbackQuery):
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(
+        types.InlineKeyboardButton(
+            text='✅ Yes, wipe everything', callback_data='confirm_reset_all_ips'),
+        types.InlineKeyboardButton(
+            text='❌ Cancel', callback_data='cancel'),
+    )
+    try:
+        bot.edit_message_text(
+            '⚠️ <b>Restart device counting for ALL users?</b>\n'
+            'Every recorded session is wiped; over-limit users are unblocked '
+            'until they breach again.',
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=keyboard)
+    except Exception:
+        pass
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(cb_query_equals('confirm_reset_all_ips'), is_admin=True)
+def confirm_reset_all_ips_command(call: types.CallbackQuery):
+    with GetDB() as db:
+        deleted = crud.reset_all_online_ips(db)
+
+    try:
+        bot.edit_message_text(
+            f'🔄 Device counting restarted for <b>everyone</b>.\n'
+            f'🗑 {deleted} recorded session(s) cleared.',
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=BotKeyboard.main_menu())
+    except Exception:
+        pass
+    bot.answer_callback_query(call.id, '✅ Done')
+
+
 @bot.callback_query_handler(cb_query_startswith('kick_device:'), is_admin=True)
 def kick_device_command(call: types.CallbackQuery):
     bot.clear_step_handler_by_chat_id(call.message.chat.id)

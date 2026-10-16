@@ -359,6 +359,31 @@ def get_user_online_ips(
     }
 
 
+@router.post("/users/online-ips/reset")
+def reset_users_online_ips(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Restart device counting for everyone: wipes all recorded sessions."""
+    deleted = crud.reset_all_online_ips(db=db)
+    logger.info(f'Online sessions wiped for all users by "{admin.username}"')
+    return {"deleted": deleted}
+
+
+@router.post("/user/{username}/online-ips/reset")
+def reset_user_online_ip_count(
+    dbuser: UserResponse = Depends(get_validated_user),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Restart device counting for one user: wipes their recorded sessions."""
+    deleted = crud.reset_user_online_ips(db=db, dbuser=dbuser)
+    logger.info(
+        f'User "{dbuser.username}"\'s online sessions were wiped by "{admin.username}"'
+    )
+    return {"deleted": deleted}
+
+
 @router.put("/user/{username}/set-owner", response_model=UserResponse)
 def set_owner(
     admin_username: str,

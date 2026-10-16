@@ -96,6 +96,7 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
     onResetAllUsage,
     onEditingNodes,
     onShowingNodesUsage,
+    resetOnlineIps,
   } = useDashboard();
   const { t } = useTranslation();
   const { colorMode, toggleColorMode } = useColorMode();
@@ -174,6 +175,17 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
                     onClick={onResetAllUsage.bind(null, true)}
                   >
                     {t("resetAllUsage")}
+                  </MenuItem>
+                  <MenuItem
+                    maxW="170px"
+                    fontSize="sm"
+                    icon={<ResetUsageIcon />}
+                    onClick={() => {
+                      handleOnClose();
+                      resetOnlineIps(null);
+                    }}
+                  >
+                    Reset Device Counting
                   </MenuItem>
                 </>
               )}

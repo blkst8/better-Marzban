@@ -240,6 +240,36 @@ def test_disappeared_sessions_are_removed_on_next_poll(db, tmp_path, monkeypatch
     assert row.first_seen_at == original_first_seen
 
 
+def test_reset_all_online_ips(client, db):
+    user = make_user(db, "ipuser40")
+    other = make_user(db, "ipuser41")
+    crud.upsert_main_online_ips(db, {
+        user.id: [{"ip": "10.0.0.1", "device": "10.0.0.1", "device_name": ""}],
+        other.id: [{"ip": "10.0.0.2", "device": "10.0.0.2", "device_name": ""}],
+    })
+
+    response = client.post("/api/users/online-ips/reset")
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 2
+    assert db.query(UserOnlineIp).count() == 0
+
+
+def test_reset_user_online_ips(client, db):
+    user = make_user(db, "ipuser42")
+    other = make_user(db, "ipuser43")
+    crud.upsert_main_online_ips(db, {
+        user.id: [{"ip": "10.0.0.1", "device": "10.0.0.1", "device_name": ""}],
+        other.id: [{"ip": "10.0.0.2", "device": "10.0.0.2", "device_name": ""}],
+    })
+
+    response = client.post(f"/api/user/{user.username}/online-ips/reset")
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 1
+    assert db.query(UserOnlineIp).filter(UserOnlineIp.user_id == other.id).count() == 1
+
+
 def test_missing_access_log_only_warns(db, monkeypatch):
     monkeypatch.setattr(job, "_access_log_path", lambda: None)
     job._record_main_host(db)
