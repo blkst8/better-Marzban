@@ -13,6 +13,7 @@ from app.utils import report
 from config import (
     DISABLE_RECORDING_ONLINE_IPS,
     ENFORCE_IP_LIMIT,
+    IPLIMIT_EXTRA_BLOCK_PORTS,
     JOB_RECORD_ONLINE_IPS_INTERVAL,
     ONLINE_IP_MAIN_STALE_INTERVAL,
     ONLINE_IP_STALE_INTERVAL,
@@ -147,30 +148,69 @@ def _iptables(args: list) -> str:
     return result.stdout
 
 
-def _ensure_chain() -> None:
-    """Creates the chain once per process and clears leftover rules."""
-    global _chain_ready
-    if _chain_ready:
-        return
+def _ip6tables(args: list) -> str:
+    result = subprocess.run(
+        ["ip6tables", *args], capture_output=True, text=True, timeout=15
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ip6tables {' '.join(args)}: {result.stderr.strip()}")
+    return result.stdout
+
+
+def _firewall(ip: str):
+    """Routes a rule to iptables or ip6tables by the address family."""
+    return _ip6tables if ipaddress.ip_address(ip).version == 6 else _iptables
+
+
+def _block_ports() -> tuple[list, list]:
+    """(tcp, udp) port lists firewalled for excess addresses: the xray
+    inbounds plus the nginx front ports that proxy into them."""
+    tcp_ports, udp_ports = _inbound_ports_by_proto()
+    extra = {
+        int(p) for p in IPLIMIT_EXTRA_BLOCK_PORTS.split(",") if p.strip().isdigit()
+    }
+    return sorted(set(tcp_ports) | extra), udp_ports
+
+
+def _ensure_family_chain(binary: str, runner) -> None:
     try:
         try:
-            _iptables(["-N", _IPTABLES_CHAIN])
+            runner(["-N", _IPTABLES_CHAIN])
         except RuntimeError:
             pass  # chain already exists
         # The jump from INPUT is idempotent: -C succeeds when already present.
         if subprocess.run(
-            ["iptables", "-C", "INPUT", "-j", _IPTABLES_CHAIN],
+            [binary, "-C", "INPUT", "-j", _IPTABLES_CHAIN],
             capture_output=True, timeout=15,
         ).returncode != 0:
-            _iptables(["-I", "INPUT", "1", "-j", _IPTABLES_CHAIN])
+            runner(["-I", "INPUT", "1", "-j", _IPTABLES_CHAIN])
         # A previous run's blocks must not outlive this process' state.
-        _iptables(["-F", _IPTABLES_CHAIN])
+        runner(["-F", _IPTABLES_CHAIN])
+    except RuntimeError as e:
+        if binary == "ip6tables":
+            # v6 unusable on this host: degrade to v4-only blocking.
+            logger.warning(f"ip6tables unavailable, IPv6 stays unblocked: {e}")
+            return
+        raise
+
+
+def _ensure_chain() -> None:
+    """Creates the chains once per process and clears leftover rules."""
+    global _chain_ready
+    if _chain_ready:
+        return
+    try:
+        _ensure_family_chain("iptables", _iptables)
+        try:
+            _ensure_family_chain("ip6tables", _ip6tables)
+        except Exception:
+            logger.warning("IPv6 blocking disabled: ip6tables unusable")
         _blocked_ips.clear()
         _chain_ready = True
     except Exception:
         logger.exception("Failed to prepare the ip-limit firewall chain")
         return
-    tcp_ports, udp_ports = _inbound_ports_by_proto()
+    tcp_ports, udp_ports = _block_ports()
     logger.info(
         f"ip-limit firewall chain {_IPTABLES_CHAIN} ready; "
         f"enforcing tcp:{tcp_ports} udp:{udp_ports}"
@@ -188,20 +228,27 @@ def _reconcile_blocked_ips(desired: dict[str, str]) -> None:
         return
 
     try:
-        tcp_ports, udp_ports = _inbound_ports_by_proto()
+        tcp_ports, udp_ports = _block_ports()
+        dports = ",".join(map(str, tcp_ports))
+        udports = ",".join(map(str, udp_ports))
         _iptables(["-F", _IPTABLES_CHAIN])
+        try:
+            _ip6tables(["-F", _IPTABLES_CHAIN])
+        except Exception:
+            pass  # v6 blocking unavailable on this host
         for ip, username in desired.items():
             try:
+                fw = _firewall(ip)
                 if tcp_ports:
-                    _iptables([
+                    fw([
                         "-A", _IPTABLES_CHAIN, "-s", ip, "-p", "tcp",
-                        "-m", "multiport", "--dports", ",".join(map(str, tcp_ports)),
+                        "-m", "multiport", "--dports", dports,
                         "-j", "DROP",
                     ])
                 if udp_ports:
-                    _iptables([
+                    fw([
                         "-A", _IPTABLES_CHAIN, "-s", ip, "-p", "udp",
-                        "-m", "multiport", "--dports", ",".join(map(str, udp_ports)),
+                        "-m", "multiport", "--dports", udports,
                         "-j", "DROP",
                     ])
                 logger.info(f"Blocked {ip} (over ip limit, user \"{username}\")")

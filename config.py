@@ -137,6 +137,11 @@ DISABLE_RECORDING_ONLINE_IPS = config("DISABLE_RECORDING_ONLINE_IPS", cast=bool,
 # Drops the excess sessions of users that are online from more IPs than their limit.
 ENFORCE_IP_LIMIT = config("ENFORCE_IP_LIMIT", cast=bool, default=True)
 
+# Extra ports firewalled by the ip limit on top of the xray inbound ports:
+# nginx fronts the trojan-WS inbound on 80/8443 (proxy_pass to 127.0.0.1),
+# so blocking only the xray ports would let clients in through the front.
+IPLIMIT_EXTRA_BLOCK_PORTS = config("IPLIMIT_EXTRA_BLOCK_PORTS", default="80,8443")
+
 # headers: profile-update-interval, support-url, profile-title
 SUB_UPDATE_INTERVAL = config("SUB_UPDATE_INTERVAL", default="12")
 SUB_SUPPORT_URL = config("SUB_SUPPORT_URL", default="https://t.me/")

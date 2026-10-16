@@ -402,6 +402,34 @@ def test_enforcement_releases_blocks_after_recovery(db, monkeypatch):
     assert record_online_ips._blocked_ips == {}
 
 
+def test_v6_addresses_route_to_ip6tables(db, monkeypatch):
+    """A v6 excess address must be blocked in ip6tables, not iptables."""
+    dbuser = make_user(db, "ipuser38", ip_limit=1)
+    report(db, None, {dbuser.id: sessions(
+        ("10.0.0.1", "a"), ("2604:a00:101:1c:216:3eff:fe35:72a9", "v6"),
+    )})
+
+    v4_calls, v6_calls = [], []
+    monkeypatch.setattr(record_online_ips, "_iptables",
+                        lambda args: v4_calls.append(args) or "")
+    monkeypatch.setattr(record_online_ips, "_ip6tables",
+                        lambda args: v6_calls.append(args) or "")
+    monkeypatch.setattr(record_online_ips, "_chain_ready", True)
+    monkeypatch.setattr(record_online_ips.xray, "nodes", {})
+    record_online_ips.enforce_ip_limits()
+
+    assert any("-s 2604:a00:101:1c:216:3eff:fe35:72a9" in " ".join(a)
+               for a in v6_calls if a[:2] == ["-A", record_online_ips._IPTABLES_CHAIN])
+    assert not any("-s 2604:" in " ".join(a) for a in v4_calls)
+    assert any("-s 10.0.0.1" in " ".join(a) for a in v4_calls
+               if a[:2] == ["-A", record_online_ips._IPTABLES_CHAIN]) is False
+
+
+def test_block_ports_include_the_nginx_front():
+    tcp, udp = record_online_ips._block_ports()
+    assert 80 in tcp and 8443 in tcp  # nginx proxies these into trojan-WS
+
+
 def test_enforcement_survives_a_failing_firewall(db, monkeypatch):
     dbuser = make_user(db, "ipuser36", ip_limit=1)
     report(db, None, {dbuser.id: sessions(
