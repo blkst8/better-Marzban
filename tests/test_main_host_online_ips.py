@@ -170,6 +170,7 @@ def test_upsert_keeps_first_seen_across_idle_gaps(db, tmp_path, monkeypatch):
     """first_seen anchors the enforcement allowance; it must never reset."""
     user = make_user(db, "mainhost5")
     log = tmp_path / "access.log"
+    log.write_text("")  # xray owns this file; the recorder only reads it
     monkeypatch.setattr(job, "_access_log_path", lambda: str(log))
 
     job._main_sightings[(user.id, "198.51.100.7")] = time.time()
