@@ -1,6 +1,7 @@
 import os
 import ipaddress
 import re
+import subprocess
 import time
 
 from app import logger, scheduler, xray
@@ -12,10 +13,50 @@ from config import (
     ENFORCE_IP_LIMIT,
     JOB_RECORD_ONLINE_IPS_INTERVAL,
     ONLINE_IP_STALE_INTERVAL,
+    XRAY_EXCLUDE_INBOUND_TAGS,
 )
 
 
 reported_breaches = {}
+
+
+def _xray_tcp_ports() -> list:
+    """The TCP ports of the main host's managed xray inbounds."""
+    ports = []
+    for inbound in xray.config.get("inbounds", []):
+        if inbound.get("tag") in XRAY_EXCLUDE_INBOUND_TAGS:
+            continue
+        port = inbound.get("port")
+        if isinstance(port, int):
+            ports.append(port)
+    return sorted(set(ports))
+
+
+def _kick_main_host_ip(ip: str, ports: list) -> int:
+    """
+    Drops one client address's established sessions on the main host.
+
+    xray has no connect-time hook here, so the backstop kills the address's
+    live TCP sessions with ss(8); the device may reconnect and gets dropped
+    again on the next poll. UDP-based inbounds (mKCP) cannot be touched this
+    way and stay monitor-only.
+
+    Returns the number of killed sockets. Raises when ss is missing or
+    refuses (missing NET_ADMIN), so the caller can degrade to monitor-only.
+    """
+    killed = 0
+    for port in ports:
+        result = subprocess.run(
+            ["ss", "--kill", "state", "established",
+             "sport", "=", f":{port}", "dst", ip],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"ss --kill failed on port {port}: {result.stderr.strip()}"
+            )
+        killed += sum(1 for line in result.stdout.splitlines() if "ESTAB" in line)
+    return killed
 
 
 def enforce_ip_limits() -> None:
@@ -38,6 +79,8 @@ def enforce_ip_limits() -> None:
         for username in list(reported_breaches.keys()):
             if username not in {u.username for u in users}:
                 del reported_breaches[username]
+
+        main_host_ports = _xray_tcp_ports()
 
         for user in users:
             records = crud.get_user_online_ips(db, user)
@@ -64,6 +107,23 @@ def enforce_ip_limits() -> None:
                 except Exception:
                     logger.exception(
                         f"Failed to kick online ip {record.ip} of user \"{user.username}\""
+                    )
+
+            # Main-host sessions have no node to kick through; drop the excess
+            # address's live connections directly.
+            for ip in sorted({r.ip for r in excess if r.node_id is None}):
+                try:
+                    dropped = _kick_main_host_ip(ip, main_host_ports)
+                except Exception:
+                    logger.exception(
+                        f"Failed to kick main-host sessions of {ip} "
+                        f"of user \"{user.username}\""
+                    )
+                    continue
+                if dropped:
+                    logger.info(
+                        f"Kicked {dropped} live session(s) of {ip} "
+                        f"of user \"{user.username}\" on the main host"
                     )
 
             logger.info(

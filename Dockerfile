@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /code
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl unzip gcc python3-dev libpq-dev \
+    && apt-get install -y --no-install-recommends build-essential curl unzip gcc python3-dev libpq-dev iproute2 \
     && curl -L -o /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" \
     && mkdir -p /usr/local/share/xray \
     && unzip -o /tmp/xray.zip -d /usr/local/share/xray \
