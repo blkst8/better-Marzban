@@ -7,6 +7,7 @@ line parser, the incremental file reader, the sighting window, and that the
 main-host rows (node_id = None) reach the same API the dashboard reads.
 """
 
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -110,6 +111,24 @@ def test_reader_resets_on_truncation(tmp_path):
     log.write_text(LINE_IPV6 + "\n")
     lines = job._read_new_access_lines(str(log))
     assert lines == [LINE_IPV6]
+
+
+def test_register_sighting_dedupes_and_skips_junk():
+    now = time.time()
+    assert job._register_sighting(LINE_WITH_FROM, now) is True      # new pair
+    assert job._register_sighting(LINE_WITH_FROM, now) is False     # same pair
+    assert job._register_sighting("garbage line", now) is False     # unparseable
+    loop = LINE_WITH_FROM.replace("198.51.100.7", "127.0.0.1")
+    assert job._register_sighting(loop, now) is False               # loopback
+    assert job._main_sightings == {(3, "198.51.100.7"): now}
+
+
+def test_follower_thread_starts_exactly_once():
+    before = threading.active_count()
+    job._ensure_follower()
+    job._ensure_follower()
+    assert threading.active_count() == before + 1
+    assert job._follower_started is True
 
 
 def test_main_host_rows_are_synced_with_node_id_none(db, tmp_path, monkeypatch):

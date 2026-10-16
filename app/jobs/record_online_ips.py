@@ -2,6 +2,7 @@ import os
 import ipaddress
 import re
 import subprocess
+import threading
 import time
 
 from app import logger, scheduler, xray
@@ -40,6 +41,93 @@ def _inbound_ports_by_proto() -> tuple[list, list]:
 _IPTABLES_CHAIN = "MARZBAN_IPLIMIT"
 _chain_ready = False
 _blocked_ips: dict[str, str] = {}
+
+# The follower thread tails the access log so a fresh breach is firewalled
+# within ~a second instead of waiting for the next poll. The scheduler job and
+# the follower share one pipeline lock: both run the same record + sweep +
+# enforce pass, and only one may touch the firewall at a time.
+_pipeline_lock = threading.Lock()
+_follower_started = False
+
+
+def _register_sighting(line: str, now: float) -> bool:
+    """Records one access-log line; True when the (user, ip) pair is new."""
+    if "accepted" not in line:
+        return False
+    match = _ACCESS_LINE_RE.search(line)
+    if not match:
+        return False
+    user_id = parse_access_email(match.group("email"))
+    if user_id is None:
+        return False
+    ip = match.group("ip").strip("[]")
+    # Traffic dialed from the VPS itself (loopback) is never a remote
+    # device; keepalives would otherwise pin a phantom session forever.
+    try:
+        if ipaddress.ip_address(ip).is_loopback:
+            return False
+    except ValueError:
+        return False
+
+    key = (user_id, ip)
+    if key in _main_sightings:
+        _main_sightings[key] = now
+        return False
+    _main_sightings[key] = now
+    return True
+
+
+def _follow_loop() -> None:
+    """Tails the access log and re-runs the pipeline on new sightings."""
+    while True:
+        path = _access_log_path()
+        if not path:
+            return  # access log disabled: the periodic job covers nothing more
+        try:
+            new_sightings = False
+            with open(path, errors="replace") as f:
+                f.seek(0, os.SEEK_END)  # the periodic job covers history
+                ino = os.fstat(f.fileno()).st_ino
+                while True:
+                    line = f.readline()
+                    if line:
+                        if not line.endswith("\n"):
+                            break  # partial write; the next pass re-reads it
+                        if _register_sighting(line, time.time()):
+                            new_sightings = True
+                        continue
+                    # EOF: copytruncate shrinks the file, rotation replaces it
+                    try:
+                        stat = os.stat(path)
+                        if stat.st_ino == ino and stat.st_size >= f.tell():
+                            time.sleep(0.3)
+                            continue
+                    except OSError:
+                        pass
+                    break
+            if new_sightings:
+                _trigger_pipeline()
+        except OSError:
+            time.sleep(5)
+
+
+def _trigger_pipeline() -> None:
+    """Runs a pipeline pass now, unless one is already running."""
+    if _pipeline_lock.acquire(blocking=False):
+        try:
+            record_online_ips()
+        finally:
+            _pipeline_lock.release()
+
+
+def _ensure_follower() -> None:
+    global _follower_started
+    if _follower_started:
+        return
+    _follower_started = True
+    threading.Thread(
+        target=_follow_loop, daemon=True, name="access-log-follow"
+    ).start()
 
 
 def _iptables(args: list) -> str:
@@ -282,23 +370,7 @@ def _record_main_host(db) -> None:
 
     now = time.time()
     for line in lines:
-        if "accepted" not in line:
-            continue
-        match = _ACCESS_LINE_RE.search(line)
-        if not match:
-            continue
-        user_id = parse_access_email(match.group("email"))
-        if user_id is None:
-            continue
-        ip = match.group("ip").strip("[]")
-        # Traffic dialed from the VPS itself (loopback) is never a remote
-        # device; keepalives would otherwise pin a phantom session forever.
-        try:
-            if ipaddress.ip_address(ip).is_loopback:
-                continue
-        except ValueError:
-            continue
-        _main_sightings[(user_id, ip)] = now
+        _register_sighting(line, now)
 
     # A long-lived connection does not re-log its acceptance, so the sighting
     # window is what keeps last_seen fresh while the connection is in use.
@@ -322,33 +394,38 @@ def record_online_ips() -> None:
     if DISABLE_RECORDING_ONLINE_IPS:
         return
 
-    with GetDB() as db:
-        for node_id, node in list(xray.nodes.items()):
-            if not (node.connected and node.started):
-                continue
+    _ensure_follower()
 
-            try:
-                reported = node.get_online_ips()
-            except Exception:
-                logger.exception(f"Failed to get online ips from node {node_id}")
-                continue
+    # The follower thread triggers this same pipeline on fresh breaches; both
+    # entry points serialize here so the firewall is touched by one at a time.
+    with _pipeline_lock:
+        with GetDB() as db:
+            for node_id, node in list(xray.nodes.items()):
+                if not (node.connected and node.started):
+                    continue
 
-            crud.sync_node_online_ips(db, node_id, reported)
+                try:
+                    reported = node.get_online_ips()
+                except Exception:
+                    logger.exception(f"Failed to get online ips from node {node_id}")
+                    continue
 
-        _record_main_host(db)
+                crud.sync_node_online_ips(db, node_id, reported)
 
-        # A node that goes unreachable never reports again, so its sessions
-        # would otherwise stay listed forever. Main-host rows idle longer by
-        # design and sweep on their own window.
-        stale = crud.delete_stale_online_ips(
-            db, ONLINE_IP_STALE_INTERVAL,
-            main_max_age_seconds=ONLINE_IP_MAIN_STALE_INTERVAL,
-        )
-        if stale:
-            logger.info(f"Removed {stale} online session(s) that went stale")
+            _record_main_host(db)
 
-    if ENFORCE_IP_LIMIT:
-        enforce_ip_limits()
+            # A node that goes unreachable never reports again, so its sessions
+            # would otherwise stay listed forever. Main-host rows idle longer by
+            # design and sweep on their own window.
+            stale = crud.delete_stale_online_ips(
+                db, ONLINE_IP_STALE_INTERVAL,
+                main_max_age_seconds=ONLINE_IP_MAIN_STALE_INTERVAL,
+            )
+            if stale:
+                logger.info(f"Removed {stale} online session(s) that went stale")
+
+        if ENFORCE_IP_LIMIT:
+            enforce_ip_limits()
 
 
 scheduler.add_job(record_online_ips, 'interval',
