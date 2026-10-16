@@ -1636,6 +1636,7 @@ def upsert_main_online_ips(db: Session, reported: dict) -> None:
         if uid not in live_ids:
             continue
         for session in sessions:
+            seen_at = datetime.utcfromtimestamp(session.get("seen_at") or now.timestamp())
             row = db.query(UserOnlineIp).filter(
                 UserOnlineIp.user_id == uid,
                 UserOnlineIp.ip == session["ip"],
@@ -1648,11 +1649,13 @@ def upsert_main_online_ips(db: Session, reported: dict) -> None:
                     ip=session["ip"],
                     device=session["device"],
                     device_name=session["device_name"],
-                    first_seen_at=now,
-                    last_seen_at=now,
+                    first_seen_at=seen_at,
+                    last_seen_at=seen_at,
                 ))
             else:
-                row.last_seen_at = now
+                # liveness only ever moves forward, even when replaying history
+                if seen_at > row.last_seen_at:
+                    row.last_seen_at = seen_at
                 if session.get("device_name"):
                     row.device_name = session["device_name"]
 

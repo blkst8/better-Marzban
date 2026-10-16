@@ -52,6 +52,14 @@ _pipeline_lock = threading.Lock()
 _follower_started = False
 
 
+def _log_line_ts(line: str) -> float:
+    """Parses the xray access-log timestamp ("2026/10/16 16:20:41 ...")."""
+    try:
+        return datetime.strptime(line[:19], "%Y/%m/%d %H:%M:%S").timestamp()
+    except (ValueError, TypeError):
+        return time.time()
+
+
 def _register_sighting(line: str, now: float) -> bool:
     """Records one access-log line; True when the (user, ip) pair is new."""
     if "accepted" not in line:
@@ -73,9 +81,11 @@ def _register_sighting(line: str, now: float) -> bool:
 
     key = (user_id, ip)
     if key in _main_sightings:
-        _main_sightings[key] = now
+        _main_sightings[key] = max(now, _main_sightings[key])
         return False
-    _main_sightings[key] = now
+    # The log's own timestamp anchors first_seen: replaying history at boot
+    # must not make old addresses look freshly arrived.
+    _main_sightings[key] = _log_line_ts(line)
     return True
 
 
@@ -434,11 +444,12 @@ def _record_main_host(db) -> None:
             del _main_sightings[key]
 
     reported: dict[str, list] = {}
-    for user_id, ip in _main_sightings:
+    for (user_id, ip), seen_at in _main_sightings.items():
         # The access log carries no device fingerprint, so each address
-        # counts as its own device.
+        # counts as its own device. seen_at rides along: it anchors
+        # first_seen at the address's real arrival, not at boot time.
         reported.setdefault(str(user_id), []).append(
-            {"ip": ip, "device": ip, "device_name": ""}
+            {"ip": ip, "device": ip, "device_name": "", "seen_at": seen_at}
         )
     # Upsert, never snapshot: rows keep their first_seen (the enforcement
     # allowance anchor) across idle gaps and are swept on their own window.
