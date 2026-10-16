@@ -58,7 +58,7 @@ def sent(monkeypatch):
 def device_limit_from_keyboard(markup) -> int:
     """Reads the device limit back out of the user_devices_menu markup."""
     row = [btn.text for row in markup.keyboard for btn in row]
-    hit = [t for t in row if t.startswith("📵 Device limit:")]
+    hit = [t for t in row if t.startswith("📵 IP limit:")]
     assert hit, f"no device limit button in {row}"
     text = hit[0].split(":")[1].strip()
     return None if text == "Unlimited" else int(text)
@@ -126,7 +126,7 @@ def test_devices_menu_shows_none_from_unlimited_limit(db):
 
 def test_breach_report_message_names_the_user_and_limit(sent):
     report_module.report_ip_limit_breach(
-        "breachy", limit=2, devices=["a", "b", "c"], admin=None)
+        "breachy", limit=2, ips=["a", "b", "c"], admin=None)
 
     text, kwargs = sent[-1]
     assert "breachy" in text
@@ -219,8 +219,8 @@ def test_info_text_reports_device_limit_and_sessions(db, jwt_secret):
     text = get_user_info_text(dbuser, online_sessions=[
         {"ip": "10.0.0.5", "device": "phone", "device_name": "iPhone · iOS 17"}])
 
-    assert "Device limit" in text and "3" in text
-    assert "Online devices (1)" in text
+    assert "IP limit" in text and "3" in text
+    assert "Online IPs (1)" in text
     assert "iPhone · iOS 17" in text
 
 
@@ -231,11 +231,11 @@ def test_info_text_without_sessions(db, jwt_secret):
     text = get_user_info_text(dbuser)
 
     assert "Unlimited" in text
-    assert "Online devices (0)" in text
+    assert "Online IPs (0)" in text
 
 
-def test_usage_command_shows_device_limit(db, jwt_secret, monkeypatch):
-    """The public /usage reply now reports the device limit and device count."""
+def test_usage_command_shows_ip_limit(db, jwt_secret, monkeypatch):
+    """The public /usage reply now reports the IP limit and IP count."""
     import app.telegram.handlers.user as user_module
 
     dbuser = make_user(db, "tguser11", ip_limit=1)
@@ -258,8 +258,8 @@ def test_usage_command_shows_device_limit(db, jwt_secret, monkeypatch):
     user_module.usage_command(FakeMessage())
 
     text = replies["text"]
-    assert "Device limit" in text
-    assert "Online devices" in text
+    assert "IP limit" in text
+    assert "Online IPs" in text
 
 
 def test_zero_limit_clears_rather_than_no_change(db, monkeypatch):

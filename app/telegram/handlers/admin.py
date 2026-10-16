@@ -596,14 +596,14 @@ def devices_command(call: types.CallbackQuery):
                          device_name=r.device_name or '')
                     for r in crud.get_user_online_ips(db, db_user)]
 
-    devices = {s["device"] for s in sessions}
-    over = bool(db_user.ip_limit) and len(devices) > db_user.ip_limit
+    ips = {s["ip"] for s in sessions}
+    over = bool(db_user.ip_limit) and len(ips) > db_user.ip_limit
     shown_limit = db_user.ip_limit if db_user.ip_limit else "Unlimited"
 
-    text = (f'📵 <b>Device limit:</b> <code>{shown_limit}</code>\n'
-            f'👥 <b>Online devices:</b> <code>{len(devices)}</code>\n')
+    text = (f'📵 <b>IP limit:</b> <code>{shown_limit}</code>\n'
+            f'👥 <b>Online IPs:</b> <code>{len(ips)}</code>\n')
     if over:
-        text += '\n⚠️ This user is over its device limit.'
+        text += '\n⚠️ This user is over its IP limit.'
     elif not sessions:
         text += '\nNobody is online.'
 
@@ -719,8 +719,8 @@ def set_device_limit_command(call: types.CallbackQuery):
     mem_store.set(f'{call.message.chat.id}:username', username)
     msg = bot.send_message(
         call.message.chat.id,
-        f'📵 Current device limit: <code>{current or "Unlimited"}</code>\n\n'
-        'Send the new device limit (devices):\n'
+        f'📵 Current IP limit: <code>{current or "Unlimited"}</code>\n\n'
+        'Send the new IP limit (distinct public IPs):\n'
         '⚠️ Send 0 for unlimited.',
         parse_mode="HTML",
         reply_markup=BotKeyboard.inline_cancel_action(f'user:{username}'))
@@ -732,7 +732,7 @@ def set_device_limit_step(message: types.Message):
     try:
         limit = int(message.text)
     except ValueError:
-        wait_msg = bot.send_message(message.chat.id, '❌ Device limit must be a number.')
+        wait_msg = bot.send_message(message.chat.id, '❌ IP limit must be a number.')
         schedule_delete_message(message.chat.id, wait_msg.id)
         schedule_delete_message(message.chat.id, message.id)
         return bot.register_next_step_handler(wait_msg, set_device_limit_step)

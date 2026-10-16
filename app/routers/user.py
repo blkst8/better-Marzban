@@ -348,15 +348,14 @@ def get_user_online_ips(
     ]
 
     ip_limit = dbuser.ip_limit or None
-    # The limit counts devices, not addresses: several devices sharing one
-    # address each consume their own share.
-    online_devices = len({record.device for record in records})
+    # The limit counts public IPs: devices behind one address share it.
+    online_ips_count = len({record.ip for record in records})
     return {
         "username": dbuser.username,
         "ip_limit": ip_limit,
-        "online_devices": online_devices,
+        "online_devices": online_ips_count,
         "online_ips": online_ips,
-        "over_limit": bool(ip_limit) and online_devices > ip_limit,
+        "over_limit": bool(ip_limit) and online_ips_count > ip_limit,
     }
 
 

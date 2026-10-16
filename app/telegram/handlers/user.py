@@ -31,8 +31,8 @@ def usage_command(message):
             'limited': '📵',
             'disabled': '❌'}
 
-        device_limit = user.ip_limit if user.ip_limit else 'Unlimited'
-        online_device_count = len({s['device'] for s in sessions})
+        ip_limit = user.ip_limit if user.ip_limit else 'Unlimited'
+        online_ip_count = len({s['ip'] for s in sessions})
 
         text = f'''\
 ┌─{statuses[user.status]} <b>Status:</b> <code>{user.status.title()}</code>
@@ -41,8 +41,8 @@ def usage_command(message):
 ├─🔋 <b>Data limit:</b> <code>{readable_size(user.data_limit) if user.data_limit else 'Unlimited'}</code>
 │          └─<b>Data Used:</b> <code>{readable_size(user.used_traffic) if user.used_traffic else "-"}</code>
 │
-├─📱 <b>Device limit:</b> <code>{device_limit}</code>
-│          └─<b>Online devices:</b> <code>{online_device_count}</code>
+├─📵 <b>IP limit:</b> <code>{ip_limit}</code>
+│          └─<b>Online IPs:</b> <code>{online_ip_count}</code>
 │
 └─📅 <b>Expiry Date:</b> <code>{datetime.fromtimestamp(user.expire).date() if user.expire else 'Never'}</code>
             └─<b>Days left:</b> <code>{(datetime.fromtimestamp(user.expire or 0) - datetime.now()).days if user.expire else '-'}</code>'''

@@ -9,9 +9,9 @@ export type OnlineIpsCellProps = {
 };
 
 /**
- * Shows how many devices the user is currently online from, and flags the row
- * when that exceeds the user's limit. Purely presentational: the table owns the
- * single bulk fetch, so this never issues a request of its own.
+ * Shows how many public IPs the user is currently online from, and flags the
+ * row when that exceeds the user's limit. Purely presentational: the table
+ * owns the single bulk fetch, so this never issues a request of its own.
  */
 export const OnlineIpsCell: FC<OnlineIpsCellProps> = ({ user }) => {
   const { t } = useTranslation();
@@ -21,10 +21,10 @@ export const OnlineIpsCell: FC<OnlineIpsCellProps> = ({ user }) => {
     return <span>-</span>;
   }
 
-  // Several devices may share one address, so the limit is spent per device.
-  const devices = new Set(sessions.map((session) => session.device));
+  // The limit counts public IPs: devices behind one address share it.
+  const ips = new Set(sessions.map((session) => session.ip));
   const limit = user.ip_limit ?? 0;
-  const overLimit = limit > 0 && devices.size > limit;
+  const overLimit = limit > 0 && ips.size > limit;
 
   const label = sessions
     .map(
@@ -50,7 +50,7 @@ export const OnlineIpsCell: FC<OnlineIpsCellProps> = ({ user }) => {
         fontSize="11px"
         cursor="default"
       >
-        {overLimit ? t("usersTable.overIpLimit") : `${devices.size}/${limit || "∞"}`}
+        {overLimit ? t("usersTable.overIpLimit") : `${ips.size}/${limit || "∞"}`}
       </Badge>
     </Tooltip>
   );

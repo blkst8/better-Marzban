@@ -84,9 +84,7 @@ def get_user_info_text(db_user: User, online_sessions: list = None) -> str:
     else:
         expiry_text = f"📅 <b>Expiry Date:</b> <code>{expiry_date}</code> ({time_left})"
     online_devices = format_online_sessions(online_sessions)
-    online_device_count = len({s["device"] for s in (online_sessions or [])})
-    if online_device_count == 0:
-        online_device_count = len(online_sessions or [])
+    online_ip_count = len({s["ip"] for s in (online_sessions or [])})
     return f"""\
 {statuses[user.status]} <b>Status:</b> <code>{user.status.title()}</code>
 
@@ -100,9 +98,9 @@ def get_user_info_text(db_user: User, online_sessions: list = None) -> str:
 🔄 <b>Subscription updated at:</b> {sub_updated_at}
 📱 <b>Subscription last agent:</b> <blockquote>{user.sub_last_user_agent or "-"}</blockquote>
 
-📵 <b>Device limit:</b> <code>{user.ip_limit if user.ip_limit else "Unlimited"}</code>
+📵 <b>IP limit:</b> <code>{user.ip_limit if user.ip_limit else "Unlimited"}</code>
 
-👥 <b>Online devices ({online_device_count}):</b>
+👥 <b>Online IPs ({online_ip_count}):</b>
 {online_devices}
 
 📝 <b>Note:</b> <blockquote expandable>{user.note or "empty"}</blockquote>

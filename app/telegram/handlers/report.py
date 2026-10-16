@@ -211,29 +211,29 @@ def report_login(username: str, password: str, client_ip: str, status: str):
     return report(text=text)
 
 
-def report_ip_limit_breach(username: str, limit: int, devices: list, admin: Admin = None):
+def report_ip_limit_breach(username: str, limit: int, ips: list, admin: Admin = None):
     """
-    Notifies admins that a user exceeded its device limit.
+    Notifies admins that a user exceeded its IP limit.
 
     Args:
         username (str): The user's username.
-        limit (int): The configured device limit.
-        devices (list): Device fingerprints currently online.
+        limit (int): The configured IP limit.
+        ips (list): Public IPs currently online.
         admin (Admin, optional): The admin the user belongs to.
     """
     text = (
-        '⚠️ <b>#Device_Limit_Breach</b>\n'
+        '⚠️ <b>#IP_Limit_Breach</b>\n'
         '➖➖➖➖➖➖➖➖➖\n'
         '<b>Username</b> : <code>%s</code>\n'
-        '<b>Device Limit</b> : <code>%d</code>\n'
-        '<b>Online Devices</b> : <code>%d</code>\n'
+        '<b>IP Limit</b> : <code>%d</code>\n'
+        '<b>Online IPs</b> : <code>%d</code>\n'
         '➖➖➖➖➖➖➖➖➖\n'
-        'The excess sessions are being dropped.\n'
+        'Excess sessions are dropped on nodes; the main host is monitor-only.\n'
         '<b>Belongs To</b> : <code>%s</code>\n'
     ) % (
         escape_html(username),
         limit,
-        len(set(devices)),
+        len(set(ips)),
         escape_html(admin.username) if admin else "-",
     )
 

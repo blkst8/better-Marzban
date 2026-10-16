@@ -20,13 +20,13 @@ reported_breaches = {}
 
 def enforce_ip_limits() -> None:
     """
-    Disconnects the excess devices of any user over their limit.
+    Disconnects the excess sessions of any user over their limit.
 
-    The limit counts distinct devices, so several devices behind one IP are
-    counted separately. Nodes are expected to enforce the limit themselves at
-    connect time; this is the backstop for nodes that report sessions but do
-    not block. The most recently seen devices are dropped first, so the
-    longest-lived sessions survive.
+    The limit counts distinct public IPs: every device behind one NAT address
+    shares that address's single allowance. Nodes are expected to enforce the
+    limit themselves at connect time; this is the backstop for nodes that
+    report sessions but do not block. Within one address, the most recently
+    seen sessions are dropped first, so the longest-lived sessions survive.
     """
     with GetDB() as db:
         users = db.query(User).filter(
@@ -41,20 +41,17 @@ def enforce_ip_limits() -> None:
 
         for user in users:
             records = crud.get_user_online_ips(db, user)
-            # Records are newest first, so the first sighting of each device is
-            # that device's most recent session. dict.fromkeys keeps that order
-            # while collapsing the repeated sessions of one device.
-            devices = list(dict.fromkeys(r.device for r in records))
-            if len(devices) <= user.ip_limit:
+            # Records are newest first, so dict.fromkeys keeps the IPs in the
+            # order of their most recent session.
+            ips = list(dict.fromkeys(r.ip for r in records))
+            if len(ips) <= user.ip_limit:
                 continue
 
-
-            # Records are newest first, so the allowance goes to the tail: the
-            # longest-lived devices keep their sessions and the devices that
-            # arrived most recently are the ones rejected.
-            allowed = set(devices[-user.ip_limit:])
-            excess = [r for r in records if r.device not in allowed]
-
+            # The allowance goes to the tail: the longest-lived IPs keep their
+            # sessions and the addresses that arrived most recently are the
+            # ones rejected.
+            allowed = set(ips[-user.ip_limit:])
+            excess = [r for r in records if r.ip not in allowed]
 
             for record in excess:
                 node = xray.nodes.get(record.node_id)
@@ -70,19 +67,19 @@ def enforce_ip_limits() -> None:
                     )
 
             logger.info(
-                f"User \"{user.username}\" is online from {len(devices)} devices "
-                f"but is limited to {user.ip_limit}; kicked {len(excess)}"
+                f"User \"{user.username}\" is online from {len(ips)} IPs "
+                f"but is limited to {user.ip_limit}; kicked {len(excess)} sessions"
             )
 
             # Reporting the same episode on every poll would spam the admins, so
-            # repeat only when the set of excess devices actually changes.
-            excess_devices = tuple(sorted({r.device for r in excess}))
-            if reported_breaches.get(user.username) != excess_devices:
-                reported_breaches[user.username] = excess_devices
+            # repeat only when the set of excess addresses actually changes.
+            excess_ips = tuple(sorted({r.ip for r in excess}))
+            if reported_breaches.get(user.username) != excess_ips:
+                reported_breaches[user.username] = excess_ips
                 report.ip_limit_breach(
                     username=user.username,
                     limit=user.ip_limit,
-                    devices=devices,
+                    ips=ips,
                     admin=user.admin,
                 )
 

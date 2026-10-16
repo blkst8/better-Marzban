@@ -1,8 +1,8 @@
 """
 Behavioural tests for the online-session limit.
 
-The limit counts distinct devices, not addresses: several devices behind one
-NAT address each consume their own share. These cover what the panel stores,
+The limit counts distinct public IPs: every device behind one NAT address
+shares that address's single allowance. These cover what the panel stores,
 what the API reports, which sessions the enforcement pass drops, and that rows
 disappear once a session goes away.
 """
@@ -180,7 +180,7 @@ def test_fresh_sessions_survive_the_sweep(db):
 
 # --- API -------------------------------------------------------------------
 
-def test_online_ips_endpoint_reports_devices(client, db):
+def test_online_ips_endpoint_reports_sessions_with_detail(client, db):
     dbuser = make_user(db, "ipuser16", ip_limit=1)
     report(db, 1, {dbuser.id: sessions(
         ("10.0.0.5", "phone", "iPhone"),
@@ -190,14 +190,15 @@ def test_online_ips_endpoint_reports_devices(client, db):
     body = client.get(f"/api/user/{dbuser.username}/online-ips").json()
 
     assert body["ip_limit"] == 1
-    assert body["online_devices"] == 2
+    # One address: both devices share its single allowance.
+    assert body["online_devices"] == 1
     assert {e["device"] for e in body["online_ips"]} == {"phone", "laptop"}
     assert {e["device_name"] for e in body["online_ips"]} == {"iPhone", "Windows"}
-    assert body["over_limit"] is True
+    assert body["over_limit"] is False
 
 
-def test_online_ips_endpoint_counts_devices_not_addresses(client, db):
-    """One address hosting two devices still breaches a limit of one."""
+def test_one_ip_hosting_two_devices_stays_within_limit(client, db):
+    """Devices behind one address share it; only distinct IPs count."""
     dbuser = make_user(db, "ipuser17", ip_limit=1)
     report(db, 1, {dbuser.id: sessions(
         ("10.0.0.5", "phone"),
@@ -205,8 +206,8 @@ def test_online_ips_endpoint_counts_devices_not_addresses(client, db):
     )})
 
     body = client.get(f"/api/user/{dbuser.username}/online-ips").json()
-    assert body["online_devices"] == 2
-    assert body["over_limit"] is True
+    assert body["online_devices"] == 1
+    assert body["over_limit"] is False
 
 
 def test_online_ips_endpoint_is_not_over_limit_at_exactly_the_limit(client, db):
@@ -229,15 +230,16 @@ def test_online_ips_endpoint_is_over_limit_at_one_past_the_limit(client, db):
     assert body["over_limit"] is True
 
 
-def test_one_device_on_many_ips_stays_within_limit(client, db):
+def test_one_device_on_many_ips_is_over_limit(client, db):
+    """The same device dialing from several addresses burns the limit per IP."""
     dbuser = make_user(db, "ipuser20", ip_limit=1)
     report(db, 1, {dbuser.id: sessions(
         ("10.0.0.1", "phone"), ("10.0.0.2", "phone"), ("10.0.0.3", "phone")
     )})
 
     body = client.get(f"/api/user/{dbuser.username}/online-ips").json()
-    assert body["online_devices"] == 1
-    assert body["over_limit"] is False
+    assert body["online_devices"] == 3
+    assert body["over_limit"] is True
 
 
 def test_online_ips_endpoint_never_marks_unlimited_user_over_limit(client, db):
@@ -295,8 +297,8 @@ def test_enforcement_kicks_only_the_excess_devices(db, monkeypatch):
     assert sorted(kicked_ips) == ["10.0.0.3", "10.0.0.4"]
 
 
-def test_enforcement_kicks_the_device_not_the_address(db, monkeypatch):
-    """Two devices share an address; only the offending device is dropped."""
+def test_enforcement_does_not_kick_devices_behind_one_ip(db, monkeypatch):
+    """Two devices share an address: one IP, one allowance — nobody is dropped."""
     dbuser = make_user(db, "ipuser26", ip_limit=1)
     report(db, 1, {dbuser.id: sessions(
         ("10.0.0.5", "phone"), ("10.0.0.5", "laptop"),
@@ -306,10 +308,7 @@ def test_enforcement_kicks_the_device_not_the_address(db, monkeypatch):
     monkeypatch.setattr(record_online_ips.xray, "nodes", {1: node})
     record_online_ips.enforce_ip_limits()
 
-    assert len(node.kicked) == 1
-    _, kicked_ip, kicked_device = node.kicked[0]
-    assert kicked_ip == "10.0.0.5"
-    assert kicked_device in {"phone", "laptop"}
+    assert node.kicked == []
 
 
 def test_enforcement_leaves_within_limit_users_alone(db, monkeypatch):
@@ -347,8 +346,8 @@ def test_enforcement_preserves_the_longest_lived_device(db, monkeypatch):
     assert node.kicked == [(f"{dbuser.id}.ipuser29", "10.0.0.9", "laptop")]
 
 
-def test_enforcement_counts_devices_across_nodes(db, monkeypatch):
-    """One device per node, but the user is over the limit overall."""
+def test_enforcement_counts_ips_across_nodes(db, monkeypatch):
+    """One address per node, but the user is over the limit overall."""
     dbuser = make_user(db, "ipuser30", ip_limit=1)
     report(db, 1, {dbuser.id: sessions(("10.0.0.1", "phone"))})
     report(db, 2, {dbuser.id: sessions(("10.0.0.9", "laptop"))})

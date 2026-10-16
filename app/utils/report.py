@@ -223,21 +223,21 @@ def login(username: str, password: str, client_ip: str, success: bool) -> None:
         except Exception:
             pass
 
-def ip_limit_breach(username: str, limit: int, devices: list, admin: Admin = None) -> None:
+def ip_limit_breach(username: str, limit: int, ips: list, admin: Admin = None) -> None:
     """
-    Notifies every channel that a user exceeded its device limit.
+    Notifies every channel that a user exceeded its IP limit.
 
     Args:
         username (str): The user's username.
-        limit (int): Configured device limit for that user.
-        devices (list): Device fingerprints that are online.
+        limit (int): Configured IP limit for that user.
+        ips (list): Public IPs the user is currently online from.
         admin (Admin, optional): The admin the user belongs to.
     """
     try:
         telegram.report_ip_limit_breach(
             username=username,
             limit=limit,
-            devices=devices,
+            ips=ips,
             admin=admin,
         )
     except Exception:

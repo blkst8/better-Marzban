@@ -257,7 +257,7 @@ class BotKeyboard:
         shown_limit = device_limit if device_limit else "Unlimited"
         keyboard.add(
             types.InlineKeyboardButton(
-                text=f"📵 Device limit: {shown_limit}",
+                text=f"📵 IP limit: {shown_limit}",
                 callback_data=f"set_device_limit:{username}"
             ),
         )
