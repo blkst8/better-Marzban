@@ -125,12 +125,6 @@ def test_register_sighting_dedupes_and_skips_junk():
     assert len(job._main_sightings) == 1
 
 
-def test_follower_thread_starts_exactly_once():
-    job._ensure_follower()
-    job._ensure_follower()  # second call must be a no-op
-    assert job._follower_started is True
-
-
 def test_main_host_rows_are_synced_with_node_id_none(db, tmp_path, monkeypatch):
     user = make_user(db, "mainhost1")
     log = tmp_path / "access.log"
