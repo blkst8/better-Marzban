@@ -49,6 +49,7 @@ _blocked_ips: dict[str, str] = {}
 # the follower share one pipeline lock: both run the same record + sweep +
 # enforce pass, and only one may touch the firewall at a time.
 _pipeline_lock = threading.Lock()
+_pipeline_pending = threading.Event()
 _follower_started = False
 
 
@@ -130,6 +131,8 @@ def _follow_once(path: str) -> None:
             try:
                 stat = os.stat(path)
                 if stat.st_ino == ino and stat.st_size >= f.tell():
+                    if _pipeline_pending.is_set():
+                        _trigger_pipeline()  # retry the pass the lock ate
                     time.sleep(0.3)
                     continue
             except OSError:
@@ -140,7 +143,10 @@ def _follow_once(path: str) -> None:
 
 
 def _trigger_pipeline() -> None:
-    """Runs a pipeline pass now, unless one is already running."""
+    """Requests a pipeline pass. LEVEL-triggered: the pending flag stays set
+    until a pass actually runs, so a trigger eaten by a concurrent pass
+    (non-blocking acquire) is retried by the follower's EOF loop."""
+    _pipeline_pending.set()
     if _pipeline_lock.acquire(blocking=False):
         try:
             record_online_ips()
@@ -475,34 +481,39 @@ def record_online_ips() -> None:
     # The follower thread triggers this same pipeline on fresh breaches; both
     # entry points serialize here so the firewall is touched by one at a time.
     with _pipeline_lock:
-        logger.info("online-ips pipeline pass")
-        with GetDB() as db:
-            for node_id, node in list(xray.nodes.items()):
-                if not (node.connected and node.started):
-                    continue
+        try:
+            logger.info("online-ips pipeline pass")
+            with GetDB() as db:
+                for node_id, node in list(xray.nodes.items()):
+                    if not (node.connected and node.started):
+                        continue
 
-                try:
-                    reported = node.get_online_ips()
-                except Exception:
-                    logger.exception(f"Failed to get online ips from node {node_id}")
-                    continue
+                    try:
+                        reported = node.get_online_ips()
+                    except Exception:
+                        logger.exception(f"Failed to get online ips from node {node_id}")
+                        continue
 
-                crud.sync_node_online_ips(db, node_id, reported)
+                    crud.sync_node_online_ips(db, node_id, reported)
 
-            _record_main_host(db)
+                _record_main_host(db)
 
-            # A node that goes unreachable never reports again, so its sessions
-            # would otherwise stay listed forever. Main-host rows idle longer by
-            # design and sweep on their own window.
-            stale = crud.delete_stale_online_ips(
-                db, ONLINE_IP_STALE_INTERVAL,
-                main_max_age_seconds=ONLINE_IP_MAIN_STALE_INTERVAL,
-            )
-            if stale:
-                logger.info(f"Removed {stale} online session(s) that went stale")
+                # A node that goes unreachable never reports again, so its sessions
+                # would otherwise stay listed forever. Main-host rows idle longer by
+                # design and sweep on their own window.
+                stale = crud.delete_stale_online_ips(
+                    db, ONLINE_IP_STALE_INTERVAL,
+                    main_max_age_seconds=ONLINE_IP_MAIN_STALE_INTERVAL,
+                )
+                if stale:
+                    logger.info(f"Removed {stale} online session(s) that went stale")
 
-        if ENFORCE_IP_LIMIT:
-            enforce_ip_limits()
+            if ENFORCE_IP_LIMIT:
+                enforce_ip_limits()
+        finally:
+            # This pass consumed the file to EOF: the follower's pending
+            # request is satisfied. New sightings set it again.
+            _pipeline_pending.clear()
 
 
 # Fire once immediately so the follower starts and the firewall reconciles
