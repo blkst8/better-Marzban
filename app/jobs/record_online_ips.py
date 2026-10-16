@@ -44,13 +44,11 @@ _IPTABLES_CHAIN = "MARZBAN_IPLIMIT"
 _chain_ready = False
 _blocked_ips: dict[str, str] = {}
 
-# The follower thread tails the access log so a fresh breach is firewalled
-# within ~a second instead of waiting for the next poll. The scheduler job and
-# the follower share one pipeline lock: both run the same record + sweep +
-# enforce pass, and only one may touch the firewall at a time.
+# The enforcement pipeline runs on a fast scheduler job (every couple of
+# seconds): the incremental access-log read + the no-op reconcile cost
+# milliseconds, so a fresh breach is firewalled within one interval. The
+# slower job adds the node polling and the staleness sweep.
 _pipeline_lock = threading.Lock()
-_pipeline_pending = threading.Event()
-_follower_started = False
 
 
 def _log_line_ts(line: str) -> float:
@@ -92,76 +90,6 @@ def _register_sighting(line: str, now: float) -> bool:
         return False
     _main_sightings[key] = [_log_line_ts(line), now]
     return True
-
-
-def _follow_loop() -> None:
-    """Tails the access log and re-runs the pipeline on new sightings."""
-    while True:
-        try:
-            path = _access_log_path()
-            if not path:
-                logger.info("access-log follower: no access log configured, exiting")
-                return  # access log disabled: the periodic job covers it
-            logger.info(f"access-log follower tailing {path}")
-            _follow_once(path)
-        except Exception:
-            # A dead follower would silently degrade blocking to the 30 s
-            # poll; make any such death loud.
-            logger.exception("access-log follower crashed; restarting in 5s")
-            time.sleep(5)
-
-
-def _follow_once(path: str) -> None:
-    new_sightings = False
-    with open(path, errors="replace") as f:
-        f.seek(0, os.SEEK_END)  # the periodic job covers history
-        ino = os.fstat(f.fileno()).st_ino
-        while True:
-            line = f.readline()
-            if line:
-                if not line.endswith("\n"):
-                    break  # partial write; the next pass re-reads it
-                if _register_sighting(line, time.time()):
-                    # A fresh breach: bail out and block NOW. The pipeline's
-                    # own reader covers whatever the tail hasn't seen yet.
-                    new_sightings = True
-                    break
-                continue
-            # EOF: copytruncate shrinks the file, rotation replaces it
-            try:
-                stat = os.stat(path)
-                if stat.st_ino == ino and stat.st_size >= f.tell():
-                    if _pipeline_pending.is_set():
-                        _trigger_pipeline()  # retry the pass the lock ate
-                    time.sleep(0.3)
-                    continue
-            except OSError:
-                pass
-            break
-    if new_sightings:
-        _trigger_pipeline()
-
-
-def _trigger_pipeline() -> None:
-    """Requests a pipeline pass. LEVEL-triggered: the pending flag stays set
-    until a pass actually runs, so a trigger eaten by a concurrent pass
-    (non-blocking acquire) is retried by the follower's EOF loop."""
-    _pipeline_pending.set()
-    if _pipeline_lock.acquire(blocking=False):
-        try:
-            record_online_ips()
-        finally:
-            _pipeline_lock.release()
-
-
-def _ensure_follower() -> None:
-    global _follower_started
-    if _follower_started:
-        return
-    _follower_started = True
-    threading.Thread(
-        target=_follow_loop, daemon=True, name="access-log-follow"
-    ).start()
 
 
 def _iptables(args: list) -> str:
@@ -473,53 +401,57 @@ def _record_main_host(db) -> None:
 
 
 def record_online_ips() -> None:
+    """Fast pass (every ~2s): record + enforce. No node I/O, no sweep."""
     if DISABLE_RECORDING_ONLINE_IPS:
         return
 
-    _ensure_follower()
-
-    # The follower thread triggers this same pipeline on fresh breaches; both
-    # entry points serialize here so the firewall is touched by one at a time.
     with _pipeline_lock:
-        try:
-            logger.info("online-ips pipeline pass")
-            with GetDB() as db:
-                for node_id, node in list(xray.nodes.items()):
-                    if not (node.connected and node.started):
-                        continue
+        with GetDB() as db:
+            _record_main_host(db)
 
-                    try:
-                        reported = node.get_online_ips()
-                    except Exception:
-                        logger.exception(f"Failed to get online ips from node {node_id}")
-                        continue
-
-                    crud.sync_node_online_ips(db, node_id, reported)
-
-                _record_main_host(db)
-
-                # A node that goes unreachable never reports again, so its sessions
-                # would otherwise stay listed forever. Main-host rows idle longer by
-                # design and sweep on their own window.
-                stale = crud.delete_stale_online_ips(
-                    db, ONLINE_IP_STALE_INTERVAL,
-                    main_max_age_seconds=ONLINE_IP_MAIN_STALE_INTERVAL,
-                )
-                if stale:
-                    logger.info(f"Removed {stale} online session(s) that went stale")
-
-            if ENFORCE_IP_LIMIT:
-                enforce_ip_limits()
-        finally:
-            # This pass consumed the file to EOF: the follower's pending
-            # request is satisfied. New sightings set it again.
-            _pipeline_pending.clear()
+        if ENFORCE_IP_LIMIT:
+            enforce_ip_limits()
 
 
-# Fire once immediately so the follower starts and the firewall reconciles
-# right after boot instead of one interval later. The scheduler runs in UTC, so
-# the naive local now() could land hours in its future — pass aware UTC.
+def record_node_online_ips() -> None:
+    """Slow pass (every 30s): node reports + the staleness sweep."""
+    if DISABLE_RECORDING_ONLINE_IPS:
+        return
+
+    with _pipeline_lock:
+        with GetDB() as db:
+            for node_id, node in list(xray.nodes.items()):
+                if not (node.connected and node.started):
+                    continue
+
+                try:
+                    reported = node.get_online_ips()
+                except Exception:
+                    logger.exception(f"Failed to get online ips from node {node_id}")
+                    continue
+
+                crud.sync_node_online_ips(db, node_id, reported)
+
+            # A node that goes unreachable never reports again, so its sessions
+            # would otherwise stay listed forever. Main-host rows idle longer by
+            # design and sweep on their own window.
+            stale = crud.delete_stale_online_ips(
+                db, ONLINE_IP_STALE_INTERVAL,
+                main_max_age_seconds=ONLINE_IP_MAIN_STALE_INTERVAL,
+            )
+            if stale:
+                logger.info(f"Removed {stale} online session(s) that went stale")
+
+
+# Both jobs fire immediately at boot (aware UTC now(): the scheduler runs in
+# UTC and a naive local now() can land hours in its future), with an unbounded
+# misfire grace so the missed boot run executes when the scheduler starts.
 scheduler.add_job(record_online_ips, 'interval',
+                  seconds=2,
+                  next_run_time=datetime.now(timezone.utc),
+                  misfire_grace_time=None,
+                  coalesce=True, max_instances=1)
+scheduler.add_job(record_node_online_ips, 'interval',
                   seconds=JOB_RECORD_ONLINE_IPS_INTERVAL,
                   next_run_time=datetime.now(timezone.utc),
                   misfire_grace_time=None,

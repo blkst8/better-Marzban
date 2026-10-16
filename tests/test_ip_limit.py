@@ -462,7 +462,7 @@ def test_poll_job_syncs_from_a_fake_node(db, monkeypatch):
     })
 
     monkeypatch.setattr(record_online_ips.xray, "nodes", {1: node})
-    record_online_ips.record_online_ips()
+    record_online_ips.record_node_online_ips()
 
     assert _ips_of(db, dbuser) == ["10.0.0.1"]
     assert _devices_of(db, dbuser) == ["phone"]
@@ -474,7 +474,7 @@ def test_poll_job_survives_a_failing_node(db, monkeypatch):
         record_online_ips.xray, "nodes", {1: FakeNode(raise_on_read=True)}
     )
 
-    record_online_ips.record_online_ips()  # must not raise
+    record_online_ips.record_node_online_ips()  # must not raise
 
     assert _ips_of(db, dbuser) == []
 
