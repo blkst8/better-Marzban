@@ -8,14 +8,14 @@ stable ClientHello signature exists for a middlebox to key on.
 """
 
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app import logger, scheduler, xray
 from app.db import GetDB, crud
 from app.models.proxy import ProxyHost, ProxyHostSecurity
 from config import (
-    JOB_ROTATE_LINKS_INTERVAL_MIN,
-    JOB_ROTATE_LINKS_JITTER_S,
+    JOB_ROTATE_LINKS_MAX_MINUTES,
+    JOB_ROTATE_LINKS_MIN_MINUTES,
     ROTATE_LINKS_ENABLED,
 )
 
@@ -103,13 +103,29 @@ def rotate_link_shapes() -> None:
     logger.info(f"Rotated link TLS shapes for {rotated} host entries")
 
 
-# Random cadence: base interval plus jitter, so the shape never changes on a
-# clockwork schedule a middlebox could learn.
+def _schedule_next() -> None:
+    """Random cadence, self-rescheduled: never a clockwork pattern."""
+    delay = random.uniform(JOB_ROTATE_LINKS_MIN_MINUTES, JOB_ROTATE_LINKS_MAX_MINUTES)
+    scheduler.add_job(
+        rotate_link_shapes, 'date',
+        run_date=datetime.now(timezone.utc) + timedelta(minutes=delay),
+        id="rotate-link-shapes", replace_existing=True,
+        misfire_grace_time=None,
+    )
+    logger.info(f"Next link-shape rotation in {delay:.0f} min")
+
+
+def rotate_and_reschedule() -> None:
+    try:
+        rotate_link_shapes()
+    finally:
+        _schedule_next()
+
+
+# First run immediately at boot; the job reschedules itself afterwards.
 scheduler.add_job(
-    rotate_link_shapes, 'interval',
-    minutes=JOB_ROTATE_LINKS_INTERVAL_MIN,
-    jitter=JOB_ROTATE_LINKS_JITTER_S,
-    next_run_time=datetime.now(timezone.utc),
+    rotate_and_reschedule, 'date',
+    run_date=datetime.now(timezone.utc),
+    id="rotate-link-shapes", replace_existing=True,
     misfire_grace_time=None,
-    coalesce=True, max_instances=1,
 )

@@ -141,8 +141,8 @@ ENFORCE_IP_LIMIT = config("ENFORCE_IP_LIMIT", cast=bool, default=True)
 # generated links on a random cadence (base interval + jitter seconds), so
 # clients never present a stable ClientHello signature.
 ROTATE_LINKS_ENABLED = config("ROTATE_LINKS_ENABLED", cast=bool, default=True)
-JOB_ROTATE_LINKS_INTERVAL_MIN = config("JOB_ROTATE_LINKS_INTERVAL_MIN", cast=int, default=20)
-JOB_ROTATE_LINKS_JITTER_S = config("JOB_ROTATE_LINKS_JITTER_S", cast=int, default=6000)
+JOB_ROTATE_LINKS_MIN_MINUTES = config("JOB_ROTATE_LINKS_MIN_MINUTES", cast=int, default=20)
+JOB_ROTATE_LINKS_MAX_MINUTES = config("JOB_ROTATE_LINKS_MAX_MINUTES", cast=int, default=120)
 
 # Extra ports firewalled by the ip limit on top of the xray inbound ports:
 # nginx fronts the trojan-WS inbound on 80/8443 (proxy_pass to 127.0.0.1),
