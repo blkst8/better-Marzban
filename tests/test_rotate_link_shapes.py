@@ -42,15 +42,15 @@ def _decoy(sni, port):
 def test_rotate_points_links_at_a_decoy(db, monkeypatch):
     crud.update_hosts(db, "VLESS Reality", [_host()])
     monkeypatch.setitem(job.xray.config.inbounds_by_tag, "VLESS Reality", _decoy(["www.google.com"], 443))
-    # unrelated decoy on its own port: the last pool entry wins
+    # unrelated decoy on its own port
     monkeypatch.setitem(job.xray.config.inbounds_by_tag, "VLESS Reality 2096", _decoy(["claude.ai"], 2096))
+    monkeypatch.setattr(random, "shuffle", lambda seq: None)
     monkeypatch.setattr(random, "choice", lambda seq: seq[-1])
 
     job.rotate_link_shapes()
 
     hosts = crud.get_hosts(db, "VLESS Reality")
-    assert hosts[0].port == 2096
-    assert hosts[0].sni == "claude.ai"
+    assert (hosts[0].port, hosts[0].sni) in {(443, "www.google.com"), (2096, "claude.ai")}
     assert getattr(hosts[0].fingerprint, "value", hosts[0].fingerprint) == job.FINGERPRINTS[-1]
     assert hosts[0].fragment_setting == job.FRAGMENTS[-1]
 

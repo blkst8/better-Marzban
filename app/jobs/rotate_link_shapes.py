@@ -101,12 +101,27 @@ def rotate_link_shapes() -> None:
     decoys = _reality_decoys()
 
     with GetDB() as db:
-        rotated = 0
+        rows_by_tag = {}
         for tag in list(xray.config.inbounds_by_tag):
             hosts = crud.get_hosts(db, tag)
-            if not hosts:
-                continue
+            if hosts:
+                rows_by_tag[tag] = hosts
 
+        # Deal decoys round-robin from a shuffled deck instead of picking one
+        # at random per link: with N links and N decoys every link lands on a
+        # different site, so your devices show different SNIs at the same time.
+        reality_rows = sum(
+            len(hosts) for tag, hosts in rows_by_tag.items()
+            if xray.config.inbounds_by_tag.get(tag, {}).get("tls") == "reality"
+        )
+        deal = []
+        while decoys and len(deal) < reality_rows:
+            cycle = list(decoys)
+            random.shuffle(cycle)
+            deal.extend(cycle)
+
+        rotated = 0
+        for tag, hosts in rows_by_tag.items():
             inbound = xray.config.inbounds_by_tag.get(tag, {})
             is_reality = inbound.get("tls") == "reality"
 
@@ -125,10 +140,10 @@ def rotate_link_shapes() -> None:
                 ):
                     new.fragment_setting = random.choice(FRAGMENTS)
 
-                if is_reality and decoys:
+                if is_reality and deal:
                     # Port and SNI travel together: the SNI only returns a
                     # genuine certificate from the frontend serving that name.
-                    decoy = random.choice(decoys)
+                    decoy = deal.pop(0)
                     new.port = decoy["port"]
                     new.sni = random.choice(decoy["names"])
 
