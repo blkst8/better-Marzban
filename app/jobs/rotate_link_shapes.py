@@ -26,14 +26,15 @@ FINGERPRINTS = [
     "edge", "360", "qq", "random", "randomized",
 ]
 
-# v2rayNG/Hiddify fragment format: "<length-range>,<interval-range>".
+# v2rayNG/Hiddify fragment format, as validated by ProxyHost:
+# "<length-range>,<interval-range>,<packet>" (packet: tlshello).
 FRAGMENTS = [
-    "1-3,5-10",
-    "2-5,8-16",
-    "3-6,10-25",
-    "5-10,15-30",
-    "10-20,20-40",
-    "20-30,40-60",
+    "1-3,5-10,tlshello",
+    "2-5,8-16,tlshello",
+    "3-6,10-25,tlshello",
+    "5-10,15-30,tlshello",
+    "10-20,20-40,tlshello",
+    "20-30,40-60,tlshello",
 ]
 
 
