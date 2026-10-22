@@ -9,7 +9,7 @@ import random
 
 from app.db import crud
 from app.jobs import rotate_link_shapes as job
-from app.models.proxy import ProxyHostModify
+from app.models.proxy import ProxyHost
 
 
 def _host(**overrides):
@@ -32,7 +32,7 @@ def _host(**overrides):
         use_sni_as_host=False,
     )
     data.update(overrides)
-    return ProxyHostModify(**data)
+    return ProxyHost(**data)
 
 
 def test_rotate_rewrites_fingerprint_fragment_and_sni(db, monkeypatch):

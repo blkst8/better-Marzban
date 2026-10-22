@@ -8,16 +8,16 @@ stable ClientHello signature exists for a middlebox to key on.
 """
 
 import random
+from datetime import datetime, timezone
 
 from app import logger, scheduler, xray
 from app.db import GetDB, crud
-from app.models.proxy import ProxyHostSecurity
+from app.models.proxy import ProxyHost, ProxyHostSecurity
 from config import (
     JOB_ROTATE_LINKS_INTERVAL_MIN,
     JOB_ROTATE_LINKS_JITTER_S,
     ROTATE_LINKS_ENABLED,
 )
-from datetime import datetime, timezone
 
 # uTLS profiles xray supports; "random"/"randomized" let the client library
 # pick its own shape per handshake.
@@ -37,6 +37,28 @@ FRAGMENTS = [
 ]
 
 
+def _copy_host(host) -> ProxyHost:
+    """get_hosts returns SQLAlchemy rows; rebuild them as pydantic hosts."""
+    return ProxyHost(
+        remark=host.remark,
+        address=host.address,
+        port=host.port,
+        sni=host.sni,
+        host=host.host,
+        path=host.path,
+        security=host.security,
+        alpn=host.alpn,
+        fingerprint=host.fingerprint,
+        allowinsecure=host.allowinsecure,
+        is_disabled=host.is_disabled,
+        mux_enable=host.mux_enable,
+        fragment_setting=host.fragment_setting,
+        noise_setting=host.noise_setting,
+        random_user_agent=host.random_user_agent,
+        use_sni_as_host=host.use_sni_as_host,
+    )
+
+
 def rotate_link_shapes() -> None:
     if not ROTATE_LINKS_ENABLED:
         return
@@ -54,7 +76,7 @@ def rotate_link_shapes() -> None:
 
             modified = []
             for host in hosts:
-                new = host.model_copy()
+                new = _copy_host(host)
                 if new.is_disabled:
                     modified.append(new)
                     continue
