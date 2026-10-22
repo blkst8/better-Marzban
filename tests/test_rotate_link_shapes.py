@@ -46,7 +46,7 @@ def test_rotate_rewrites_fingerprint_fragment_and_sni(db, monkeypatch):
     job.rotate_link_shapes()
 
     hosts = crud.get_hosts(db, "VLESS Reality")
-    assert hosts[0].fingerprint == job.FINGERPRINTS[-1]
+    assert getattr(hosts[0].fingerprint, "value", hosts[0].fingerprint) == job.FINGERPRINTS[-1]
     assert hosts[0].fragment_setting == job.FRAGMENTS[-1]
     # pool minus the current SNI -> only microsoft left
     assert hosts[0].sni == "www.microsoft.com"
@@ -63,6 +63,6 @@ def test_rotate_leaves_disabled_hosts_alone(db, monkeypatch):
     job.rotate_link_shapes()
 
     hosts = crud.get_hosts(db, "VLESS Reality")
-    assert hosts[0].fingerprint == "chrome"
+    assert getattr(hosts[0].fingerprint, "value", hosts[0].fingerprint) == "chrome"
     assert hosts[0].sni == "www.bing.com"
     assert hosts[0].fragment_setting is None
