@@ -1,10 +1,17 @@
 """
 Rotates the TLS shape of every generated link on a random cadence.
 
-Each pass rewrites the hosts table with a new uTLS fingerprint, a new TLS
-fragment shape and a new Reality decoy SNI (from the inbound's own serverNames
-pool). Clients pick the changes up on their next subscription refresh, so no
-stable ClientHello signature exists for a middlebox to key on.
+Every Reality inbound is a decoy fronting a real site (deepseek, opencode,
+claude, z.ai, moonshot, google...). Each pass picks one of those live decoys
+for every Reality host entry and rewrites the link to point at it: the port
+and the SNI both come from that decoy's own serverNames, so an active prober
+always receives that site's genuine certificate.
+
+All decoy inbounds share one keypair and one shortId list, so any link stays
+valid against any decoy — switching decoys never breaks a client, it only
+changes what the ClientHello looks like to DPI.
+
+uTLS fingerprint and TLS fragment shape rotate on the same pass.
 """
 
 import random
@@ -38,7 +45,6 @@ FRAGMENTS = [
     "20-30,40-60,tlshello",
 ]
 
-
 # The model validates the fragment shape; stale rows may hold values written
 # before that validation existed, and copying them would abort the rotation.
 _FRAGMENT_RE = re.compile(r"^\d+-\d+,\d+-\d+,[a-z]+$")
@@ -69,9 +75,28 @@ def _copy_host(host) -> ProxyHost:
     )
 
 
+def _reality_decoys():
+    """Live Reality inbounds, each one a decoy fronting a real site.
+
+    Derived from the running config, so adding a decoy is a config change,
+    not a code change — no hardcoded list to drift out of sync.
+    """
+    decoys = []
+    for tag, inbound in xray.config.inbounds_by_tag.items():
+        if inbound.get("tls") != "reality":
+            continue
+        names = [n for n in (inbound.get("sni") or []) if n]
+        port = inbound.get("port")
+        if names and port:
+            decoys.append({"tag": tag, "port": port, "names": names})
+    return decoys
+
+
 def rotate_link_shapes() -> None:
     if not ROTATE_LINKS_ENABLED:
         return
+
+    decoys = _reality_decoys()
 
     with GetDB() as db:
         rotated = 0
@@ -79,10 +104,9 @@ def rotate_link_shapes() -> None:
             hosts = crud.get_hosts(db, tag)
             if not hosts:
                 continue
+
             inbound = xray.config.inbounds_by_tag.get(tag, {})
-            # The Reality decoy pool is the inbound's own serverNames: a client
-            # SNI outside that list would fail the handshake.
-            sni_pool = [s for s in (inbound.get("sni") or []) if s]
+            is_reality = inbound.get("tls") == "reality"
 
             modified = []
             for host in hosts:
@@ -99,9 +123,12 @@ def rotate_link_shapes() -> None:
                 ):
                     new.fragment_setting = random.choice(FRAGMENTS)
 
-                if sni_pool and new.sni:
-                    choices = [s for s in sni_pool if s != new.sni] or list(sni_pool)
-                    new.sni = random.choice(choices)
+                if is_reality and decoys:
+                    # Port and SNI travel together: the SNI only returns a
+                    # genuine certificate from the frontend serving that name.
+                    decoy = random.choice(decoys)
+                    new.port = decoy["port"]
+                    new.sni = random.choice(decoy["names"])
 
                 modified.append(new)
                 rotated += 1
@@ -109,7 +136,10 @@ def rotate_link_shapes() -> None:
             crud.update_hosts(db, tag, modified)
 
     xray.hosts.update()
-    logger.info(f"Rotated link TLS shapes for {rotated} host entries")
+    logger.info(
+        f"Rotated link TLS shapes for {rotated} host entries "
+        f"across {len(decoys)} decoys"
+    )
 
 
 def _schedule_next() -> None:
