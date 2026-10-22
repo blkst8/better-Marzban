@@ -27,11 +27,13 @@ from config import (
     ROTATE_LINKS_ENABLED,
 )
 
-# uTLS profiles xray supports; "random"/"randomized" let the client library
-# pick its own shape per handshake.
+# uTLS profiles xray supports, verified live against a decoy (a fingerprint
+# this core cannot build fails the handshake *silently*, so only keep ones
+# proven to connect). "random"/"randomized" let the client library pick its
+# own shape per handshake.
 FINGERPRINTS = [
-    "chrome", "firefox", "safari", "ios", "android",
-    "edge", "360", "qq", "random", "randomized",
+    "chrome", "firefox", "safari", "ios",
+    "edge", "qq", "random", "randomized",
 ]
 
 # v2rayNG/Hiddify fragment format, as validated by ProxyHost:
