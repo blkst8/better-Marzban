@@ -8,6 +8,7 @@ stable ClientHello signature exists for a middlebox to key on.
 """
 
 import random
+import re
 from datetime import datetime, timedelta, timezone
 
 from app import logger, scheduler, xray
@@ -38,9 +39,18 @@ FRAGMENTS = [
 ]
 
 
+# The model validates the fragment shape; stale rows may hold values written
+# before that validation existed, and copying them would abort the rotation.
+_FRAGMENT_RE = re.compile(r"^\d+-\d+,\d+-\d+,[a-z]+$")
+
+
 def _copy_host(host) -> ProxyHost:
     """get_hosts returns SQLAlchemy rows; rebuild them as pydantic hosts."""
+    fragment = host.fragment_setting
+    if fragment and not _FRAGMENT_RE.match(fragment):
+        fragment = None
     return ProxyHost(
+        fragment_setting=fragment,
         remark=host.remark,
         address=host.address,
         port=host.port,
@@ -53,7 +63,6 @@ def _copy_host(host) -> ProxyHost:
         allowinsecure=host.allowinsecure,
         is_disabled=host.is_disabled,
         mux_enable=host.mux_enable,
-        fragment_setting=host.fragment_setting,
         noise_setting=host.noise_setting,
         random_user_agent=host.random_user_agent,
         use_sni_as_host=host.use_sni_as_host,
